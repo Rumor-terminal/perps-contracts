@@ -19,22 +19,29 @@ library PositionLib {
         bool isOpen;
     }
 
-    function notional(Position storage p) internal view returns (uint256) {
-        return uint256(p.collateral) * p.leverage;
-    }
-
     function size(
         Position storage p,
         uint64 sizeScale
     ) internal view returns (uint96) {
-        return sizeOf(notional(p), sizeScale, p.entryPrice);
+        if (sizeScale == 0) revert IExchange.InvalidSizeScale();
+        uint256 value = (uint256(p.collateral) * p.leverage * sizeScale) /
+            p.entryPrice;
+        if (value > type(uint96).max) revert IExchange.SizeOverflow();
+        return uint96(value);
     }
 
     function liquidationPrice(
         Position storage p,
         uint64 buffer
     ) internal view returns (uint64) {
-        return liquidationPriceOf(p.entryPrice, p.leverage, buffer, p.isLong);
+        uint256 entry = p.entryPrice;
+        uint256 step = entry / p.leverage;
+        if (p.isLong) {
+            uint256 base = entry - step;
+            return uint64(base + (base * buffer) / WAD);
+        }
+        uint256 shortBase = entry + step;
+        return uint64(shortBase - (shortBase * buffer) / WAD);
     }
 
     function isLiquidatable(
@@ -63,31 +70,5 @@ library PositionLib {
                 inst.impactB,
                 inst.impactC
             );
-    }
-
-    function sizeOf(
-        uint256 notionalValue,
-        uint64 sizeScale,
-        uint64 price
-    ) internal pure returns (uint96) {
-        if (sizeScale == 0) revert IExchange.InvalidSizeScale();
-        uint256 value = (notionalValue * sizeScale) / price;
-        if (value > type(uint96).max) revert IExchange.SizeOverflow();
-        return uint96(value);
-    }
-
-    function liquidationPriceOf(
-        uint64 entryPrice,
-        uint32 leverage,
-        uint64 buffer,
-        bool isLong
-    ) internal pure returns (uint64) {
-        uint256 step = entryPrice / leverage;
-        if (isLong) {
-            uint256 base = entryPrice - step;
-            return uint64(base + (base * buffer) / WAD);
-        }
-        uint256 shortBase = entryPrice + step;
-        return uint64(shortBase - (shortBase * buffer) / WAD);
     }
 }

@@ -246,13 +246,6 @@ interface IExchange {
         uint256 positionId
     ) external view returns (uint64);
 
-    function previewLiquidationPrice(
-        uint32 instrumentId,
-        uint64 entryPrice,
-        uint32 leverage,
-        bool isLong
-    ) external view returns (uint64);
-
     function previewPnl(
         uint256 positionId,
         uint64 markPrice

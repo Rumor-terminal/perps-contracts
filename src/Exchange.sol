@@ -321,21 +321,6 @@ contract Exchange is IExchange, Ownable2Step {
         return p.liquidationPrice(instruments[p.instrumentId].liquidationBuffer);
     }
 
-    function previewLiquidationPrice(
-        uint32 instrumentId,
-        uint64 entryPrice,
-        uint32 leverage,
-        bool isLong
-    ) external view returns (uint64) {
-        return
-            PositionLib.liquidationPriceOf(
-                entryPrice,
-                leverage,
-                instruments[instrumentId].liquidationBuffer,
-                isLong
-            );
-    }
-
     function previewPnl(
         uint256 positionId,
         uint64 markPrice
@@ -553,31 +538,22 @@ contract Exchange is IExchange, Ownable2Step {
         if (tradingPaused) revert TradingPaused();
         _updatePyth(priceUpdate);
         uint64 price = _checkOpenParams(instrumentId, collateral, leverage);
-        _increaseOi(
-            instrumentId,
-            isLong,
-            PositionLib.sizeOf(
-                uint256(collateral) * leverage,
-                marketOi[instrumentId].sizeScale,
-                price
-            )
-        );
         bool useCredits;
         (fromWallet, useCredits) = _lockMargin(trader, collateral);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
 
         positionId = nextPositionId++;
-        positions[positionId] = PositionLib.Position({
-            owner: trader,
-            instrumentId: instrumentId,
-            entryPrice: price,
-            collateral: collateral,
-            leverage: leverage,
-            openedAt: uint64(block.timestamp),
-            isLong: isLong,
-            usedCredits: useCredits,
-            isOpen: true
-        });
+        PositionLib.Position storage p = positions[positionId];
+        p.owner = trader;
+        p.instrumentId = instrumentId;
+        p.entryPrice = price;
+        p.collateral = collateral;
+        p.leverage = leverage;
+        p.openedAt = uint64(block.timestamp);
+        p.isLong = isLong;
+        p.usedCredits = useCredits;
+        p.isOpen = true;
+        _increaseOi(instrumentId, isLong, p.size(marketOi[instrumentId].sizeScale));
         uint256[] storage ids = userOpenPositionIds[trader];
         ids.push(positionId);
         positionIndex[positionId] = ids.length;

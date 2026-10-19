@@ -430,13 +430,14 @@ contract ExchangeTest is Test {
         }
     }
 
-    function testFuzzLiquidationPriceSide(uint64 entry, uint32 lev) public view {
+    function testFuzzLiquidationPriceSide(uint64 entry, uint32 lev) public {
         entry = uint64(bound(entry, 1 * P8, 1_000_000 * P8));
         lev = uint32(bound(lev, 1, 1000));
-        uint64 longLiq = ex.previewLiquidationPrice(0, entry, lev, true);
-        uint64 shortLiq = ex.previewLiquidationPrice(0, entry, lev, false);
-        assertLe(longLiq, entry);
-        assertGe(shortLiq, entry);
+        setPrice(BTC, entry);
+        uint256 longId = open(alice, 0, true, 1_000e18, lev);
+        uint256 shortId = open(bob, 0, false, 1_000e18, lev);
+        assertLe(ex.liquidationPrice(longId), entry);
+        assertGe(ex.liquidationPrice(shortId), entry);
     }
 
     function testSolvencyInvariantAfterRandomTrades(uint8 n, uint256 seed) public {
