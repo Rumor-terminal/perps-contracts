@@ -6,6 +6,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
@@ -15,6 +16,7 @@ import {IExchange} from "./interfaces/IExchange.sol";
 contract Exchange is IExchange, Ownable2Step, Martingaler {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
+    using EnumerableSet for EnumerableSet.UintSet;
     using PositionLib for Position;
     using InstrumentLib for Instrument;
 
@@ -41,8 +43,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     uint32 public instrumentCount;
     mapping(uint256 => Position) public positions;
     uint256 public nextPositionId;
-    mapping(address => uint256[]) internal userOpenPositionIds;
-    mapping(uint256 => uint256) public positionIndex;
+    mapping(address => EnumerableSet.UintSet) internal userOpenPositionIds;
     uint256 public totalLockedMargin;
     uint256 public lossFeeRate = 0.02e18;
     uint256 public winFeeRate = 0.02e18;
@@ -105,9 +106,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
 
         positionId = nextPositionId++;
         positions[positionId] = p;
-        uint256[] storage ids = userOpenPositionIds[msg.sender];
-        ids.push(positionId);
-        positionIndex[positionId] = ids.length;
+        userOpenPositionIds[msg.sender].add(positionId);
 
         emit PositionOpened(positionId, msg.sender, instrumentId, isLong, p.entryPrice, collateral, leverage);
         if (cash != 0) collateralToken.safeTransferFrom(msg.sender, address(this), cash / collateralScale);
@@ -193,7 +192,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     }
 
     function getUserOpenPositionIds(address user) external view returns (uint256[] memory) {
-        return userOpenPositionIds[user];
+        return userOpenPositionIds[user].values();
     }
 
     function getMarketOi(uint32 instrumentId) external view returns (Oi memory) {
@@ -306,7 +305,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         positions[positionId].isOpen = false;
         totalLockedMargin -= p.collateral - p.debited;
         instrument.decreaseOi(p.isLong, p.size(instrument.oi.sizeScale));
-        _removeUserPosition(p.owner, positionId);
+        userOpenPositionIds[p.owner].remove(positionId);
 
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
         uint256 fee = _accumulateClose(totals, p.collateral, p.debited, pnl);
@@ -369,7 +368,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         positions[positionId].isOpen = false;
         totalLockedMargin -= cash;
         instrument.decreaseOi(p.isLong, p.size(instrument.oi.sizeScale));
-        _removeUserPosition(p.owner, positionId);
+        userOpenPositionIds[p.owner].remove(positionId);
 
         if (cash != 0) _settleLoss(cash);
         uint256 fee = (collateral * liquidationFeeRate) / PRECISION;
@@ -395,21 +394,5 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
             cache.loaded[instrumentId] = true;
         }
         return cache.prices[instrumentId];
-    }
-
-    function _removeUserPosition(address user, uint256 positionId) internal {
-        uint256 index = positionIndex[positionId];
-        if (index == 0) return;
-
-        uint256[] storage ids = userOpenPositionIds[user];
-        uint256 lastIndex = ids.length - 1;
-        if (index - 1 != lastIndex) {
-            uint256 lastId = ids[lastIndex];
-            ids[index - 1] = lastId;
-            positionIndex[lastId] = index;
-        }
-
-        ids.pop();
-        delete positionIndex[positionId];
     }
 }
