@@ -82,6 +82,283 @@ contract Exchange is IExchange, Ownable2Step {
         debtQueue.nextId = 1;
     }
 
+    function openPosition(
+        uint32 instrumentId,
+        bool isLong,
+        uint128 collateral,
+        uint32 leverage,
+        bytes[] calldata priceUpdate
+    ) external payable returns (uint256 positionId) {
+        _updatePyth(priceUpdate);
+        uint256 fromWallet;
+        (positionId, fromWallet) = _openPosition(
+            msg.sender,
+            instrumentId,
+            isLong,
+            collateral,
+            leverage
+        );
+        if (fromWallet != 0)
+            collateralToken.safeTransferFrom(
+                msg.sender,
+                address(this),
+                fromWallet
+            );
+    }
+
+    function closePositions(
+        uint256[] calldata positionIds,
+        bytes[] calldata priceUpdate
+    ) external payable {
+        _updatePyth(priceUpdate);
+        _closePositions(msg.sender, positionIds);
+    }
+
+    function claim(uint256 amount) external {
+        if (amount == 0) revert ZeroAmount();
+        uint256 debit = amount * collateralScale;
+        if (balances[msg.sender] < debit) revert InsufficientBalance();
+        balances[msg.sender] -= debit;
+        totalBalances -= uint128(debit);
+        collateralToken.safeTransfer(msg.sender, amount);
+        emit Claimed(msg.sender, debit);
+    }
+
+    function liquidate(
+        uint256 positionId,
+        bytes[] calldata priceUpdate
+    ) external payable {
+        _updatePyth(priceUpdate);
+        Position storage p = positions[positionId];
+        if (!p.isOpen) revert PositionNotOpen();
+        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
+            p,
+            _newPriceCache(0)
+        );
+        if (!liquidatable) revert NotLiquidatable();
+        _executeLiquidation(positionId, p, price, liqPrice);
+    }
+
+    function liquidateBatch(
+        uint256[] calldata positionIds,
+        bytes[] calldata priceUpdate
+    ) external payable returns (uint256 liquidated) {
+        _updatePyth(priceUpdate);
+        PriceCache memory cache = _newPriceCache(instrumentCount);
+        for (uint256 i; i < positionIds.length; ++i) {
+            if (_tryLiquidate(cache, positionIds[i])) ++liquidated;
+        }
+        emit LiquidationBatchProcessed(positionIds.length, liquidated);
+    }
+
+    function harvest(uint256 maxIterations) external returns (uint256 paid) {
+        if (debtQueue.totalQueued == 0) revert QueueEmpty();
+        uint256 available = queueHarvestAvailable();
+        if (available == 0) return 0;
+        uint256 newTotalBalances;
+        (paid, newTotalBalances) = QueueLib.harvest(
+            debtQueue,
+            maxIterations,
+            available,
+            balances,
+            totalBalances
+        );
+        totalBalances = uint128(newTotalBalances);
+        uint128 bucket = sideBucket;
+        uint128 newBucket = debtQueue.totalQueued != 0 && paid < bucket
+            ? bucket - uint128(paid)
+            : 0;
+        if (newBucket != bucket) _setSideBucket(newBucket);
+    }
+
+    function compactDebtQueue(
+        address user,
+        uint256 startId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
+        return
+            QueueLib.compactDust(
+                debtQueue,
+                user,
+                startId,
+                maxMerges,
+                PRECISION
+            );
+    }
+
+    function compactDebtQueueRange(
+        address user,
+        uint256 fromId,
+        uint256 intoId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 resultId) {
+        return
+            QueueLib.compactDustRange(
+                debtQueue,
+                user,
+                fromId,
+                intoId,
+                maxMerges,
+                PRECISION
+            );
+    }
+
+    function compactAdjacentDebtQueue(
+        address user,
+        uint256 startId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
+        return QueueLib.compactAdjacent(debtQueue, user, startId, maxMerges);
+    }
+
+    function compactAdjacentDebtQueueRange(
+        address user,
+        uint256 fromId,
+        uint256 toId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
+        return
+            QueueLib.compactAdjacentRange(
+                debtQueue,
+                user,
+                fromId,
+                toId,
+                maxMerges
+            );
+    }
+
+    function fundHouse(uint256 amount) external {
+        if (amount == 0) revert ZeroAmount();
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit HouseFunded(msg.sender, amount * collateralScale);
+    }
+
+    function queueHarvestAvailable() public view returns (uint256) {
+        uint256 liabilities = uint256(totalBalances) +
+            totalLockedMargin +
+            protocolFeeAccumulator;
+        uint256 held = collateralToken.balanceOf(address(this)) * collateralScale;
+        return held > liabilities ? held - liabilities : 0;
+    }
+
+    function lpBankrollAvailable() public view returns (uint256) {
+        return debtQueue.totalQueued != 0 ? 0 : queueHarvestAvailable();
+    }
+
+    function totalQueued() external view returns (uint256) {
+        return debtQueue.totalQueued;
+    }
+
+    function queueHead() external view returns (uint256) {
+        return debtQueue.head;
+    }
+
+    function queueNextId() external view returns (uint256) {
+        return debtQueue.nextId;
+    }
+
+    function userQueuedTotal(address user) external view returns (uint256) {
+        return debtQueue.userQueuedTotal[user];
+    }
+
+    function userQueueHead(address user) external view returns (uint256) {
+        return debtQueue.userQueueHead[user];
+    }
+
+    function userQueueTail(address user) external view returns (uint256) {
+        return debtQueue.userQueueTail[user];
+    }
+
+    function queueNode(
+        uint256 id
+    )
+        external
+        view
+        returns (address user, uint48 next, uint48 prev, uint256 amount)
+    {
+        QueueLib.Node storage n = debtQueue.nodes[id];
+        return (n.user, n.next, n.prev, n.amount);
+    }
+
+    function positionOwner(uint256 positionId) external view returns (address) {
+        return positions[positionId].owner;
+    }
+
+    function getUserOpenPositionIds(
+        address user
+    ) external view returns (uint256[] memory) {
+        return userOpenPositionIds[user];
+    }
+
+    function getMarketOi(
+        uint32 instrumentId
+    )
+        external
+        view
+        returns (
+            uint96 longSize,
+            uint96 shortSize,
+            uint128 longCap,
+            uint128 shortCap,
+            uint64 sizeScale
+        )
+    {
+        MarketOi storage oi = marketOi[instrumentId];
+        return (
+            oi.longSize,
+            oi.shortSize,
+            oi.longCap,
+            oi.shortCap,
+            oi.sizeScale
+        );
+    }
+
+    function liquidationPrice(
+        uint256 positionId
+    ) external view returns (uint64) {
+        Position storage p = positions[positionId];
+        return
+            _liquidationPrice(
+                p.entryPrice,
+                p.leverage,
+                instruments[p.instrumentId].liquidationBuffer,
+                p.isLong
+            );
+    }
+
+    function previewLiquidationPrice(
+        uint32 instrumentId,
+        uint64 entryPrice,
+        uint32 leverage,
+        bool isLong
+    ) external view returns (uint64) {
+        return
+            _liquidationPrice(
+                entryPrice,
+                leverage,
+                instruments[instrumentId].liquidationBuffer,
+                isLong
+            );
+    }
+
+    function previewPnl(
+        uint256 positionId,
+        uint64 markPrice
+    ) external view returns (int256 rawPnl, int256 pnl) {
+        return _positionPnl(positions[positionId], markPrice);
+    }
+
+    function currentPrice(uint32 instrumentId) external view returns (uint64) {
+        _requireInstrument(instrumentId);
+        return _price(instrumentId, instruments[instrumentId].priceId);
+    }
+
+    function pythUpdateFee(
+        bytes[] calldata priceUpdate
+    ) external view returns (uint256) {
+        return priceUpdate.length == 0 ? 0 : pyth.getUpdateFee(priceUpdate);
+    }
+
     function setMaxPriceAge(uint256 maxPriceAge_) external onlyOwner {
         maxPriceAge = maxPriceAge_;
         emit MaxPriceAgeUpdated(maxPriceAge_);
@@ -214,157 +491,6 @@ contract Exchange is IExchange, Ownable2Step {
         revert UnpauseDisabled();
     }
 
-    function claim(uint256 amount) external {
-        if (amount == 0) revert ZeroAmount();
-        uint256 debit = amount * collateralScale;
-        if (balances[msg.sender] < debit) revert InsufficientBalance();
-        balances[msg.sender] -= debit;
-        totalBalances -= uint128(debit);
-        collateralToken.safeTransfer(msg.sender, amount);
-        emit Claimed(msg.sender, debit);
-    }
-
-    function fundHouse(uint256 amount) external {
-        if (amount == 0) revert ZeroAmount();
-        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
-        emit HouseFunded(msg.sender, amount * collateralScale);
-    }
-
-    function openPosition(
-        uint32 instrumentId,
-        bool isLong,
-        uint128 collateral,
-        uint32 leverage,
-        bytes[] calldata priceUpdate
-    ) external payable returns (uint256 positionId) {
-        _updatePyth(priceUpdate);
-        uint256 fromWallet;
-        (positionId, fromWallet) = _openPosition(
-            msg.sender,
-            instrumentId,
-            isLong,
-            collateral,
-            leverage
-        );
-        if (fromWallet != 0)
-            collateralToken.safeTransferFrom(
-                msg.sender,
-                address(this),
-                fromWallet
-            );
-    }
-
-    function closePositions(
-        uint256[] calldata positionIds,
-        bytes[] calldata priceUpdate
-    ) external payable {
-        _updatePyth(priceUpdate);
-        _closePositions(msg.sender, positionIds);
-    }
-
-    function liquidate(
-        uint256 positionId,
-        bytes[] calldata priceUpdate
-    ) external payable {
-        _updatePyth(priceUpdate);
-        Position storage p = positions[positionId];
-        if (!p.isOpen) revert PositionNotOpen();
-        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
-            p,
-            _newPriceCache(0)
-        );
-        if (!liquidatable) revert NotLiquidatable();
-        _executeLiquidation(positionId, p, price, liqPrice);
-    }
-
-    function liquidateBatch(
-        uint256[] calldata positionIds,
-        bytes[] calldata priceUpdate
-    ) external payable returns (uint256 liquidated) {
-        _updatePyth(priceUpdate);
-        PriceCache memory cache = _newPriceCache(instrumentCount);
-        for (uint256 i; i < positionIds.length; ++i) {
-            if (_tryLiquidate(cache, positionIds[i])) ++liquidated;
-        }
-        emit LiquidationBatchProcessed(positionIds.length, liquidated);
-    }
-
-    function harvest(uint256 maxIterations) external returns (uint256 paid) {
-        if (debtQueue.totalQueued == 0) revert QueueEmpty();
-        uint256 available = queueHarvestAvailable();
-        if (available == 0) return 0;
-        uint256 newTotalBalances;
-        (paid, newTotalBalances) = QueueLib.harvest(
-            debtQueue,
-            maxIterations,
-            available,
-            balances,
-            totalBalances
-        );
-        totalBalances = uint128(newTotalBalances);
-        uint128 bucket = sideBucket;
-        uint128 newBucket = debtQueue.totalQueued != 0 && paid < bucket
-            ? bucket - uint128(paid)
-            : 0;
-        if (newBucket != bucket) _setSideBucket(newBucket);
-    }
-
-    function compactDebtQueue(
-        address user,
-        uint256 startId,
-        uint256 maxMerges
-    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
-        return
-            QueueLib.compactDust(
-                debtQueue,
-                user,
-                startId,
-                maxMerges,
-                PRECISION
-            );
-    }
-
-    function compactDebtQueueRange(
-        address user,
-        uint256 fromId,
-        uint256 intoId,
-        uint256 maxMerges
-    ) external returns (uint256 count, uint256 amount, uint256 resultId) {
-        return
-            QueueLib.compactDustRange(
-                debtQueue,
-                user,
-                fromId,
-                intoId,
-                maxMerges,
-                PRECISION
-            );
-    }
-
-    function compactAdjacentDebtQueue(
-        address user,
-        uint256 startId,
-        uint256 maxMerges
-    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
-        return QueueLib.compactAdjacent(debtQueue, user, startId, maxMerges);
-    }
-
-    function compactAdjacentDebtQueueRange(
-        address user,
-        uint256 fromId,
-        uint256 toId,
-        uint256 maxMerges
-    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
-        return
-            QueueLib.compactAdjacentRange(
-                debtQueue,
-                user,
-                fromId,
-                toId,
-                maxMerges
-            );
-    }
-
     receive() external payable {}
 
     function withdrawNative(address to, uint256 amount) external onlyOwner {
@@ -378,132 +504,6 @@ contract Exchange is IExchange, Ownable2Step {
         protocolFeeAccumulator = 0;
         uint256 paid = _payOrQueue(msg.sender, amount);
         emit ProtocolFeesClaimed(msg.sender, amount, paid);
-    }
-
-    function queueHarvestAvailable() public view returns (uint256) {
-        uint256 liabilities = uint256(totalBalances) +
-            totalLockedMargin +
-            protocolFeeAccumulator;
-        uint256 held = collateralToken.balanceOf(address(this)) * collateralScale;
-        return held > liabilities ? held - liabilities : 0;
-    }
-
-    function lpBankrollAvailable() public view returns (uint256) {
-        return debtQueue.totalQueued != 0 ? 0 : queueHarvestAvailable();
-    }
-
-    function totalQueued() external view returns (uint256) {
-        return debtQueue.totalQueued;
-    }
-
-    function queueHead() external view returns (uint256) {
-        return debtQueue.head;
-    }
-
-    function queueNextId() external view returns (uint256) {
-        return debtQueue.nextId;
-    }
-
-    function userQueuedTotal(address user) external view returns (uint256) {
-        return debtQueue.userQueuedTotal[user];
-    }
-
-    function userQueueHead(address user) external view returns (uint256) {
-        return debtQueue.userQueueHead[user];
-    }
-
-    function userQueueTail(address user) external view returns (uint256) {
-        return debtQueue.userQueueTail[user];
-    }
-
-    function queueNode(
-        uint256 id
-    )
-        external
-        view
-        returns (address user, uint48 next, uint48 prev, uint256 amount)
-    {
-        QueueLib.Node storage n = debtQueue.nodes[id];
-        return (n.user, n.next, n.prev, n.amount);
-    }
-
-    function positionOwner(uint256 positionId) external view returns (address) {
-        return positions[positionId].owner;
-    }
-
-    function getUserOpenPositionIds(
-        address user
-    ) external view returns (uint256[] memory) {
-        return userOpenPositionIds[user];
-    }
-
-    function getMarketOi(
-        uint32 instrumentId
-    )
-        external
-        view
-        returns (
-            uint96 longSize,
-            uint96 shortSize,
-            uint128 longCap,
-            uint128 shortCap,
-            uint64 sizeScale
-        )
-    {
-        MarketOi storage oi = marketOi[instrumentId];
-        return (
-            oi.longSize,
-            oi.shortSize,
-            oi.longCap,
-            oi.shortCap,
-            oi.sizeScale
-        );
-    }
-
-    function liquidationPrice(
-        uint256 positionId
-    ) external view returns (uint64) {
-        Position storage p = positions[positionId];
-        return
-            _liquidationPrice(
-                p.entryPrice,
-                p.leverage,
-                instruments[p.instrumentId].liquidationBuffer,
-                p.isLong
-            );
-    }
-
-    function previewLiquidationPrice(
-        uint32 instrumentId,
-        uint64 entryPrice,
-        uint32 leverage,
-        bool isLong
-    ) external view returns (uint64) {
-        return
-            _liquidationPrice(
-                entryPrice,
-                leverage,
-                instruments[instrumentId].liquidationBuffer,
-                isLong
-            );
-    }
-
-    function previewPnl(
-        uint256 positionId,
-        uint64 markPrice
-    ) external view returns (int256 rawPnl, int256 pnl) {
-        return _positionPnl(positions[positionId], markPrice);
-    }
-
-    function currentPrice(uint32 instrumentId) external view returns (uint64) {
-        _requireInstrument(instrumentId);
-        return _price(instrumentId, instruments[instrumentId].priceId);
-    }
-
-    function pythUpdateFee(
-        bytes[] calldata priceUpdate
-    ) external view returns (uint256) {
-        return priceUpdate.length == 0 ? 0 : pyth.getUpdateFee(priceUpdate);
     }
 
     function _updatePyth(bytes[] calldata priceUpdate) internal {
