@@ -13,18 +13,6 @@ interface IExchange {
         uint128 impactC;
     }
 
-    struct Position {
-        address owner;
-        uint32 instrumentId;
-        uint64 entryPrice;
-        uint128 collateral;
-        uint32 leverage;
-        uint64 openedAt;
-        bool isLong;
-        bool usedCredits;
-        bool isOpen;
-    }
-
     struct MarketPause {
         bool paused;
         uint64 bid;

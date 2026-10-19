@@ -15,10 +15,12 @@ import {
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {QueueLib} from "./QueueLib.sol";
+import {PositionLib} from "./PositionLib.sol";
 import {IExchange} from "./interfaces/IExchange.sol";
 
 contract Exchange is IExchange, Ownable2Step {
     using SafeERC20 for IERC20;
+    using PositionLib for PositionLib.Position;
 
     struct PriceCache {
         uint64[] prices;
@@ -52,7 +54,7 @@ contract Exchange is IExchange, Ownable2Step {
     mapping(uint32 => Instrument) public instruments;
     uint32 public instrumentCount;
     mapping(address => uint256) public balances;
-    mapping(uint256 => Position) public positions;
+    mapping(uint256 => PositionLib.Position) public positions;
     uint256 public nextPositionId;
     mapping(address => uint256[]) internal userOpenPositionIds;
     mapping(uint256 => uint256) public positionIndex;
@@ -128,7 +130,7 @@ contract Exchange is IExchange, Ownable2Step {
         bytes[] calldata priceUpdate
     ) external payable {
         _updatePyth(priceUpdate);
-        Position storage p = positions[positionId];
+        PositionLib.Position storage p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
         (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
             p,
@@ -315,14 +317,8 @@ contract Exchange is IExchange, Ownable2Step {
     function liquidationPrice(
         uint256 positionId
     ) external view returns (uint64) {
-        Position storage p = positions[positionId];
-        return
-            _liquidationPrice(
-                p.entryPrice,
-                p.leverage,
-                instruments[p.instrumentId].liquidationBuffer,
-                p.isLong
-            );
+        PositionLib.Position storage p = positions[positionId];
+        return p.liquidationPrice(instruments[p.instrumentId].liquidationBuffer);
     }
 
     function previewLiquidationPrice(
@@ -332,7 +328,7 @@ contract Exchange is IExchange, Ownable2Step {
         bool isLong
     ) external view returns (uint64) {
         return
-            _liquidationPrice(
+            PositionLib.liquidationPriceOf(
                 entryPrice,
                 leverage,
                 instruments[instrumentId].liquidationBuffer,
@@ -344,7 +340,8 @@ contract Exchange is IExchange, Ownable2Step {
         uint256 positionId,
         uint64 markPrice
     ) external view returns (int256 rawPnl, int256 pnl) {
-        return _positionPnl(positions[positionId], markPrice);
+        PositionLib.Position storage p = positions[positionId];
+        return p.pnl(markPrice, instruments[p.instrumentId]);
     }
 
     function currentPrice(uint32 instrumentId) external view returns (uint64) {
@@ -559,7 +556,7 @@ contract Exchange is IExchange, Ownable2Step {
         _increaseOi(
             instrumentId,
             isLong,
-            _positionSize(
+            PositionLib.sizeOf(
                 uint256(collateral) * leverage,
                 marketOi[instrumentId].sizeScale,
                 price
@@ -570,7 +567,7 @@ contract Exchange is IExchange, Ownable2Step {
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
 
         positionId = nextPositionId++;
-        positions[positionId] = Position({
+        positions[positionId] = PositionLib.Position({
             owner: trader,
             instrumentId: instrumentId,
             entryPrice: price,
@@ -671,7 +668,7 @@ contract Exchange is IExchange, Ownable2Step {
         bool closedAny;
         for (uint256 i; i < count; ++i) {
             uint256 positionId = positionIds[i];
-            Position storage p = positions[positionId];
+            PositionLib.Position storage p = positions[positionId];
             if (!p.isOpen || p.owner != trader) continue;
             closedAny = true;
             _closePosition(trader, positionId, p, cache, totals);
@@ -682,7 +679,7 @@ contract Exchange is IExchange, Ownable2Step {
     function _closePosition(
         address trader,
         uint256 positionId,
-        Position storage p,
+        PositionLib.Position storage p,
         PriceCache memory cache,
         CloseTotals memory totals
     ) internal {
@@ -698,13 +695,12 @@ contract Exchange is IExchange, Ownable2Step {
         _decreaseOi(
             p.instrumentId,
             p.isLong,
-            _positionSize(
-                uint256(p.collateral) * p.leverage,
-                marketOi[p.instrumentId].sizeScale,
-                p.entryPrice
-            )
+            p.size(marketOi[p.instrumentId].sizeScale)
         );
-        (int256 rawPnl, int256 pnl) = _positionPnl(p, price);
+        (int256 rawPnl, int256 pnl) = p.pnl(
+            price,
+            instruments[p.instrumentId]
+        );
         _removeUserPosition(trader, positionId);
         uint256 fees = _settleClose(
             trader,
@@ -722,25 +718,6 @@ contract Exchange is IExchange, Ownable2Step {
             p.usedCredits,
             fees
         );
-    }
-
-    function _positionPnl(
-        Position storage p,
-        uint64 price
-    ) internal view returns (int256 rawPnl, int256 pnl) {
-        Instrument storage inst = instruments[p.instrumentId];
-        return
-            QueueLib.computePositionPnl(
-                p.entryPrice,
-                price,
-                p.collateral,
-                p.leverage,
-                p.isLong,
-                inst.profitHaircut,
-                inst.impactA,
-                inst.impactB,
-                inst.impactC
-            );
     }
 
     function _settleClose(
@@ -824,7 +801,7 @@ contract Exchange is IExchange, Ownable2Step {
         PriceCache memory cache,
         uint256 positionId
     ) internal returns (bool) {
-        Position storage p = positions[positionId];
+        PositionLib.Position storage p = positions[positionId];
         if (!p.isOpen) return false;
         (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
             p,
@@ -836,23 +813,20 @@ contract Exchange is IExchange, Ownable2Step {
     }
 
     function _checkLiquidatable(
-        Position storage p,
+        PositionLib.Position storage p,
         PriceCache memory cache
     ) internal view returns (bool liquidatable, uint64 price, uint64 liqPrice) {
         Instrument storage inst = instruments[p.instrumentId];
         price = _cachedPrice(cache, p.instrumentId, inst.priceId);
-        liqPrice = _liquidationPrice(
-            p.entryPrice,
-            p.leverage,
-            inst.liquidationBuffer,
-            p.isLong
+        (liquidatable, liqPrice) = p.isLiquidatable(
+            price,
+            inst.liquidationBuffer
         );
-        liquidatable = p.isLong ? price <= liqPrice : price >= liqPrice;
     }
 
     function _executeLiquidation(
         uint256 positionId,
-        Position storage p,
+        PositionLib.Position storage p,
         uint64 price,
         uint64 liqPrice
     ) internal {
@@ -864,11 +838,7 @@ contract Exchange is IExchange, Ownable2Step {
         _decreaseOi(
             instrumentId,
             p.isLong,
-            _positionSize(
-                uint256(collateral) * p.leverage,
-                marketOi[instrumentId].sizeScale,
-                p.entryPrice
-            )
+            p.size(marketOi[instrumentId].sizeScale)
         );
 
         uint256 fee;
@@ -941,32 +911,6 @@ contract Exchange is IExchange, Ownable2Step {
             cache.loaded[instrumentId] = true;
         }
         return cache.prices[instrumentId];
-    }
-
-    function _liquidationPrice(
-        uint64 entryPrice,
-        uint32 leverage,
-        uint64 buffer,
-        bool isLong
-    ) internal pure returns (uint64) {
-        uint256 step = entryPrice / leverage;
-        if (isLong) {
-            uint256 base = entryPrice - step;
-            return uint64(base + (base * buffer) / PRECISION);
-        }
-        uint256 shortBase = entryPrice + step;
-        return uint64(shortBase - (shortBase * buffer) / PRECISION);
-    }
-
-    function _positionSize(
-        uint256 notional,
-        uint64 sizeScale,
-        uint64 price
-    ) internal pure returns (uint96) {
-        if (sizeScale == 0) revert InvalidSizeScale();
-        uint256 size = (notional * sizeScale) / price;
-        if (size > type(uint96).max) revert SizeOverflow();
-        return uint96(size);
     }
 
     function _decreaseOi(
