@@ -32,8 +32,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         uint256 marginReturned;
         uint256 paidNow;
         uint256 profit;
-        uint256 stakerFees;
-        uint256 devFees;
+        uint256 fees;
         uint256 marginReleased;
         uint256 losses;
         uint256 sideBucket;
@@ -52,7 +51,6 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     IERC20 public immutable collateralToken;
     uint256 public immutable collateralScale;
 
-    address public pauseGuardian;
     uint256 public maxPriceAge = 60;
     mapping(uint32 => Instrument) public instruments;
     uint32 public instrumentCount;
@@ -68,28 +66,12 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     uint256 public lossFeeRate = 0.02e18;
     uint256 public winFeeRate = 0.02e18;
     uint256 public liquidationFeeRate = 0.02e18;
-    uint128 public stakerFeeAccumulator;
-    uint128 public devFeeAccumulator;
+    uint128 public protocolFeeAccumulator;
     uint128 public sideBucket;
     TradeMinimums public tradeMinimums = TradeMinimums(1e18, 0);
     bool public tradingPaused;
-    address public stakerFeeRecipient;
-    address public devFeeRecipient;
-    address public marketKeeper;
     mapping(uint32 => MarketPause) public marketPause;
     mapping(uint32 => MarketOi) public marketOi;
-
-    modifier onlyOwnerOrKeeper() {
-        if (msg.sender != owner() && msg.sender != marketKeeper)
-            revert NotMarketKeeper();
-        _;
-    }
-
-    modifier onlyOwnerOrGuardian() {
-        if (msg.sender != owner() && msg.sender != pauseGuardian)
-            revert NotOwnerOrGuardian();
-        _;
-    }
 
     constructor(
         address owner_,
@@ -101,30 +83,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         uint8 decimals = IERC20Metadata(collateral_).decimals();
         if (decimals > 18) revert UnsupportedCollateralDecimals();
         collateralScale = 10 ** uint256(18 - decimals);
-        pauseGuardian = owner_;
-        devFeeRecipient = owner_;
-        stakerFeeRecipient = owner_;
         debtQueue.nextId = 1;
-    }
-
-    function setPauseGuardian(address guardian) external onlyOwner {
-        pauseGuardian = guardian;
-        emit PauseGuardianUpdated(guardian);
-    }
-
-    function setStakerFeeRecipient(address recipient) external onlyOwner {
-        stakerFeeRecipient = recipient;
-        emit StakerFeeRecipientUpdated(recipient);
-    }
-
-    function setDevFeeRecipient(address recipient) external onlyOwner {
-        devFeeRecipient = recipient;
-        emit DevFeeRecipientUpdated(recipient);
-    }
-
-    function setMarketKeeper(address keeper) external onlyOwner {
-        marketKeeper = keeper;
-        emit MarketKeeperUpdated(keeper);
     }
 
     function setMaxPriceAge(uint256 maxPriceAge_) external onlyOwner {
@@ -132,9 +91,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         emit MaxPriceAgeUpdated(maxPriceAge_);
     }
 
-    function setTradingPaused(bool paused) external {
-        if (msg.sender != owner() && (msg.sender != pauseGuardian || !paused))
-            revert NotOwnerOrGuardian();
+    function setTradingPaused(bool paused) external onlyOwner {
         tradingPaused = paused;
         emit TradingPausedUpdated(paused);
     }
@@ -160,7 +117,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     function setTradeMinimums(
         uint128 minCollateral,
         uint128 minNotional
-    ) external onlyOwnerOrKeeper {
+    ) external onlyOwner {
         tradeMinimums = TradeMinimums(minCollateral, minNotional);
         emit TradeMinimumsUpdated(minCollateral, minNotional);
     }
@@ -233,7 +190,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         uint32 instrumentId,
         uint128 longCap,
         uint128 shortCap
-    ) external onlyOwnerOrKeeper {
+    ) external onlyOwner {
         _requireInstrument(instrumentId);
         MarketOi storage oi = marketOi[instrumentId];
         oi.longCap = longCap;
@@ -244,7 +201,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     function pauseMarket(
         uint32 instrumentId,
         bytes[] calldata priceUpdate
-    ) external payable onlyOwnerOrGuardian nonReentrant {
+    ) external payable onlyOwner nonReentrant {
         _requireInstrument(instrumentId);
         MarketPause storage mp = marketPause[instrumentId];
         if (mp.paused) revert MarketAlreadyPaused();
@@ -427,31 +384,18 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
             );
     }
 
-    function claimStakerFees() external {
-        address recipient = stakerFeeRecipient;
-        if (msg.sender != recipient) revert NotStakerFeeRecipient();
-        uint256 amount = stakerFeeAccumulator;
+    function claimProtocolFees() external onlyOwner {
+        uint256 amount = protocolFeeAccumulator;
         if (amount == 0) return;
-        stakerFeeAccumulator = 0;
-        uint256 paid = _payOrQueue(recipient, amount);
-        emit StakerFeesClaimed(recipient, amount, paid);
-    }
-
-    function claimDevFees() external {
-        address recipient = devFeeRecipient;
-        if (msg.sender != recipient) revert NotDevFeeRecipient();
-        uint256 amount = devFeeAccumulator;
-        if (amount == 0) return;
-        devFeeAccumulator = 0;
-        uint256 paid = _payOrQueue(recipient, amount);
-        emit DevFeesClaimed(recipient, amount, paid);
+        protocolFeeAccumulator = 0;
+        uint256 paid = _payOrQueue(msg.sender, amount);
+        emit ProtocolFeesClaimed(msg.sender, amount, paid);
     }
 
     function queueHarvestAvailable() public view returns (uint256) {
         uint256 liabilities = uint256(totalBalances) +
             totalLockedMargin +
-            stakerFeeAccumulator +
-            devFeeAccumulator;
+            protocolFeeAccumulator;
         uint256 held = treasury;
         return held > liabilities ? held - liabilities : 0;
     }
@@ -828,9 +772,8 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         totals.marginReturned += st.marginReturned;
         totals.paidNow += st.paidNow;
         totals.sideBucket += st.toSideBucket;
-        totals.stakerFees += st.stakerFee;
-        totals.devFees += st.devFee;
         fees = st.stakerFee + st.devFee;
+        totals.fees += fees;
         _trackAvailable(
             totals,
             usedCredits ? 0 : collateral,
@@ -880,19 +823,10 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
             totalLockedMargin -= uint128(totals.marginReleased);
         uint256 credited = totals.marginReturned + totals.paidNow;
         if (credited != 0) _creditBalance(trader, credited);
-        if (totals.stakerFees + totals.devFees != 0) {
-            stakerFeeAccumulator += uint128(totals.stakerFees);
-            devFeeAccumulator += uint128(totals.devFees);
-        }
+        if (totals.fees != 0) protocolFeeAccumulator += uint128(totals.fees);
         if (totals.sideBucket != 0)
             _setSideBucket(sideBucket + uint128(totals.sideBucket));
-        emit PositionsClosed(
-            trader,
-            credited,
-            balances[trader],
-            totals.stakerFees,
-            totals.devFees
-        );
+        emit PositionsClosed(trader, credited, balances[trader], totals.fees);
     }
 
     function _tryLiquidate(
@@ -946,20 +880,13 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
             )
         );
 
-        uint256 stakerFee;
-        uint256 devFee;
+        uint256 fee;
         bool usedCredits = p.usedCredits;
         if (!usedCredits) {
             totalLockedMargin -= collateral;
             if (debtQueue.totalQueued == 0) {
-                uint256 fee = (uint256(collateral) * liquidationFeeRate) /
-                    PRECISION;
-                if (fee != 0) {
-                    stakerFee = fee >> 1;
-                    devFee = fee - stakerFee;
-                    stakerFeeAccumulator += uint128(stakerFee);
-                    devFeeAccumulator += uint128(devFee);
-                }
+                fee = (uint256(collateral) * liquidationFeeRate) / PRECISION;
+                if (fee != 0) protocolFeeAccumulator += uint128(fee);
             } else {
                 _setSideBucket(sideBucket + collateral);
             }
@@ -970,8 +897,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
             price,
             liqPrice,
             usedCredits,
-            stakerFee,
-            devFee
+            fee
         );
     }
 

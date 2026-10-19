@@ -46,10 +46,6 @@ interface IExchange {
     }
 
     error UnsupportedCollateralDecimals();
-    error NotOwnerOrGuardian();
-    error NotMarketKeeper();
-    error NotDevFeeRecipient();
-    error NotStakerFeeRecipient();
     error FeeTooHigh();
     error InvalidInstrumentConfig();
     error InvalidSizeScale();
@@ -79,10 +75,6 @@ interface IExchange {
     error RefundFailed();
     error InvalidPrice();
 
-    event PauseGuardianUpdated(address indexed guardian);
-    event StakerFeeRecipientUpdated(address indexed recipient);
-    event DevFeeRecipientUpdated(address indexed recipient);
-    event MarketKeeperUpdated(address indexed keeper);
     event TradingPausedUpdated(bool paused);
     event MaxPriceAgeUpdated(uint256 maxPriceAge);
     event FeeRatesUpdated(
@@ -142,8 +134,7 @@ interface IExchange {
         address indexed trader,
         uint256 credited,
         uint256 newBalance,
-        uint256 stakerFees,
-        uint256 devFees
+        uint256 fees
     );
     event Liquidated(
         uint256 indexed positionId,
@@ -151,20 +142,14 @@ interface IExchange {
         uint64 price,
         uint64 liquidationPrice,
         bool usedCredits,
-        uint256 stakerFee,
-        uint256 devFee
+        uint256 fee
     );
     event LiquidationBatchProcessed(uint256 requested, uint256 liquidated);
     event SideBucketUpdated(uint256 sideBucket);
     event Deposited(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event HouseFunded(address indexed from, uint256 amount);
-    event StakerFeesClaimed(
-        address indexed recipient,
-        uint256 amount,
-        uint256 paid
-    );
-    event DevFeesClaimed(
+    event ProtocolFeesClaimed(
         address indexed recipient,
         uint256 amount,
         uint256 paid
@@ -228,9 +213,7 @@ interface IExchange {
         uint256 maxMerges
     ) external returns (uint256 count, uint256 amount, uint256 intoId);
 
-    function claimStakerFees() external;
-
-    function claimDevFees() external;
+    function claimProtocolFees() external;
 
     function queueHarvestAvailable() external view returns (uint256);
 
@@ -295,14 +278,6 @@ interface IExchange {
     function pythUpdateFee(
         bytes[] calldata priceUpdate
     ) external view returns (uint256);
-
-    function setPauseGuardian(address guardian) external;
-
-    function setStakerFeeRecipient(address recipient) external;
-
-    function setDevFeeRecipient(address recipient) external;
-
-    function setMarketKeeper(address keeper) external;
 
     function setMaxPriceAge(uint256 maxPriceAge_) external;
 

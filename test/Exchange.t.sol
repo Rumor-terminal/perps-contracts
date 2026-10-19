@@ -133,7 +133,7 @@ contract ExchangeTest is Test {
         assertFalse(isOpen);
         uint256 fee = uint256(pnl) * 0.02e18 / 1e18;
         assertEq(ex.balances(alice), 99_000e18 + 1_000e18 + uint256(pnl) - fee);
-        assertEq(ex.stakerFeeAccumulator() + ex.devFeeAccumulator(), fee);
+        assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.totalLockedMargin(), 0);
         assertEq(ex.queueHarvestAvailable(), houseBefore - uint256(pnl));
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
@@ -149,7 +149,7 @@ contract ExchangeTest is Test {
         close(alice, id);
         uint256 fee = 250e18 * 0.02e18 / 1e18;
         assertEq(ex.balances(alice), 99_000e18 + 750e18);
-        assertEq(ex.stakerFeeAccumulator() + ex.devFeeAccumulator(), fee);
+        assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.queueHarvestAvailable(), 1_000_000e18 + 250e18 - fee);
     }
 
@@ -192,8 +192,7 @@ contract ExchangeTest is Test {
         assertEq(ex.balances(alice), 99_000e18);
         assertEq(ex.totalLockedMargin(), 0);
         uint256 fee = 1_000e18 * 0.02e18 / 1e18;
-        assertEq(ex.stakerFeeAccumulator(), fee / 2);
-        assertEq(ex.devFeeAccumulator(), fee - fee / 2);
+        assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.queueHarvestAvailable(), 1_000_000e18 + 1_000e18 - fee);
     }
 
@@ -290,7 +289,7 @@ contract ExchangeTest is Test {
         assertEq(ex.totalQueued(), owed - paidNow);
         assertEq(ex.userQueuedTotal(alice), owed - paidNow);
         assertEq(ex.lpBankrollAvailable(), 0);
-        assertEq(ex.stakerFeeAccumulator() + ex.devFeeAccumulator(), 0);
+        assertEq(ex.protocolFeeAccumulator(), 0);
 
         uint256 credit = 5_000e18;
         vm.prank(alice);
@@ -334,18 +333,15 @@ contract ExchangeTest is Test {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
         setPrice(BTC, 70_000 * P8);
         close(alice, id);
-        uint256 dev = ex.devFeeAccumulator();
-        uint256 staker = ex.stakerFeeAccumulator();
-        assertGt(dev, 0);
+        uint256 fees = ex.protocolFeeAccumulator();
+        assertGt(fees, 0);
         vm.prank(alice);
-        vm.expectRevert(IExchange.NotDevFeeRecipient.selector);
-        ex.claimDevFees();
-        vm.startPrank(owner);
-        ex.claimDevFees();
-        ex.claimStakerFees();
-        vm.stopPrank();
-        assertEq(ex.balances(owner), dev + staker);
-        assertEq(ex.devFeeAccumulator(), 0);
+        vm.expectRevert();
+        ex.claimProtocolFees();
+        vm.prank(owner);
+        ex.claimProtocolFees();
+        assertEq(ex.balances(owner), fees);
+        assertEq(ex.protocolFeeAccumulator(), 0);
     }
 
     function testCloseBatchMixed() public {
@@ -411,8 +407,7 @@ contract ExchangeTest is Test {
                 ex.closePositions(one, noUpdate);
             }
         }
-        uint256 liabilities = uint256(ex.totalBalances()) + ex.totalLockedMargin() + ex.stakerFeeAccumulator()
-            + ex.devFeeAccumulator();
+        uint256 liabilities = uint256(ex.totalBalances()) + ex.totalLockedMargin() + ex.protocolFeeAccumulator();
         assertEq(usdc.balanceOf(address(ex)), ex.treasury() / 1e12);
         assertGe(ex.treasury() + ex.totalQueued() + 1, liabilities);
     }
