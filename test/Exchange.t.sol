@@ -6,6 +6,7 @@ import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {Exchange} from "../src/Exchange.sol";
 import {IExchange} from "../src/interfaces/IExchange.sol";
+import {InstrumentLib} from "../src/InstrumentLib.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 
 contract ExchangeTest is Test {
@@ -43,8 +44,8 @@ contract ExchangeTest is Test {
         vm.deal(liquidator, 1 ether);
     }
 
-    function _instrument(bytes32 priceId) internal pure returns (IExchange.Instrument memory) {
-        return IExchange.Instrument({
+    function _instrument(bytes32 priceId) internal pure returns (InstrumentLib.Config memory) {
+        return InstrumentLib.Config({
             impactA: 1e21,
             impactB: 1e18,
             priceId: priceId,
@@ -296,13 +297,13 @@ contract ExchangeTest is Test {
         ex.openPosition(0, true, 9e18, 10, noUpdate);
         vm.expectRevert(IExchange.NotionalBelowMinimum.selector);
         ex.openPosition(0, true, 10e18, 10, noUpdate);
-        vm.expectRevert(IExchange.LeverageTooHigh.selector);
+        vm.expectRevert(InstrumentLib.LeverageTooHigh.selector);
         ex.openPosition(0, true, 1_000e18, 1001, noUpdate);
-        vm.expectRevert(IExchange.LeverageTooLow.selector);
+        vm.expectRevert(InstrumentLib.LeverageTooLow.selector);
         ex.openPosition(0, true, 1_000e18, 0, noUpdate);
-        vm.expectRevert(IExchange.PositionTooLarge.selector);
+        vm.expectRevert(InstrumentLib.PositionTooLarge.selector);
         ex.openPosition(0, true, 10_000e18, 101, noUpdate);
-        vm.expectRevert(IExchange.InvalidInstrumentId.selector);
+        vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
         ex.openPosition(7, true, 1_000e18, 10, noUpdate);
         vm.expectRevert();
         ex.openPosition(0, true, 100_001e18, 1, noUpdate);
@@ -314,7 +315,7 @@ contract ExchangeTest is Test {
         ex.setMarketOiCaps(0, uint128(10_000e18 * 1e8 / (80_000 * P8)), type(uint128).max);
         open(alice, 0, true, 1_000e18, 10);
         vm.prank(bob);
-        vm.expectRevert(IExchange.OiCapExceeded.selector);
+        vm.expectRevert(InstrumentLib.OiCapExceeded.selector);
         ex.openPosition(0, true, 1_000e18, 10, noUpdate);
         open(bob, 0, false, 1_000e18, 10);
     }

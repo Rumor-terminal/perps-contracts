@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {Script, console} from "forge-std/Script.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {Exchange} from "../src/Exchange.sol";
-import {IExchange} from "../src/interfaces/IExchange.sol";
+import {InstrumentLib} from "../src/InstrumentLib.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 
 contract Deploy is Script {
@@ -45,8 +45,8 @@ contract Deploy is Script {
         console.log("usdc", usdc);
     }
 
-    function _instrument(bytes32 priceId) internal pure returns (IExchange.Instrument memory) {
-        return IExchange.Instrument({
+    function _instrument(bytes32 priceId) internal pure returns (InstrumentLib.Config memory) {
+        return InstrumentLib.Config({
             impactA: 1e21,
             impactB: 1e18,
             priceId: priceId,
