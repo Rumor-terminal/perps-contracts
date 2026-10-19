@@ -12,15 +12,12 @@ import {
     Ownable2Step,
     Ownable
 } from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {
-    ReentrancyGuard
-} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {QueueLib} from "./QueueLib.sol";
 import {IExchange} from "./interfaces/IExchange.sol";
 
-contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
+contract Exchange is IExchange, Ownable2Step {
     using SafeERC20 for IERC20;
 
     struct PriceCache {
@@ -201,24 +198,25 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     function pauseMarket(
         uint32 instrumentId,
         bytes[] calldata priceUpdate
-    ) external payable onlyOwner nonReentrant {
+    ) external payable onlyOwner {
         _requireInstrument(instrumentId);
         MarketPause storage mp = marketPause[instrumentId];
         if (mp.paused) revert MarketAlreadyPaused();
-        _updatePyth(priceUpdate);
+        uint256 fee = _updatePyth(priceUpdate);
         (uint64 bid, uint64 ask) = _bidAsk(instruments[instrumentId].priceId);
         mp.paused = true;
         mp.bid = bid;
         mp.ask = ask;
         mp.pausedAt = uint64(block.timestamp);
         emit MarketPaused(instrumentId, bid, ask, uint64(block.timestamp));
+        _refundExcess(fee);
     }
 
     function unpauseMarket(uint32) external pure {
         revert UnpauseDisabled();
     }
 
-    function deposit(uint256 amount) external nonReentrant {
+    function deposit(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
         uint256 credit = amount * collateralScale;
@@ -227,7 +225,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         emit Deposited(msg.sender, credit);
     }
 
-    function withdraw(uint256 amount) external nonReentrant {
+    function withdraw(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         uint256 debit = amount * collateralScale;
         if (balances[msg.sender] < debit) revert WithdrawalExceedsBalance();
@@ -238,7 +236,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         emit Withdrawn(msg.sender, debit);
     }
 
-    function fundHouse(uint256 amount) external nonReentrant {
+    function fundHouse(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
         uint256 credit = amount * collateralScale;
@@ -261,8 +259,8 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         uint32 leverage,
         bool useCredits,
         bytes[] calldata priceUpdate
-    ) external payable nonReentrant returns (uint256 positionId) {
-        _updatePyth(priceUpdate);
+    ) external payable returns (uint256 positionId) {
+        uint256 fee = _updatePyth(priceUpdate);
         positionId = _openPosition(
             msg.sender,
             instrumentId,
@@ -271,21 +269,23 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
             leverage,
             useCredits
         );
+        _refundExcess(fee);
     }
 
     function closePositions(
         uint256[] calldata positionIds,
         bytes[] calldata priceUpdate
-    ) external payable nonReentrant {
-        _updatePyth(priceUpdate);
+    ) external payable {
+        uint256 fee = _updatePyth(priceUpdate);
         _closePositions(msg.sender, positionIds);
+        _refundExcess(fee);
     }
 
     function liquidate(
         uint256 positionId,
         bytes[] calldata priceUpdate
-    ) external payable nonReentrant {
-        _updatePyth(priceUpdate);
+    ) external payable {
+        uint256 fee = _updatePyth(priceUpdate);
         Position storage p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
         (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
@@ -294,18 +294,20 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         );
         if (!liquidatable) revert NotLiquidatable();
         _executeLiquidation(positionId, p, price, liqPrice);
+        _refundExcess(fee);
     }
 
     function liquidateBatch(
         uint256[] calldata positionIds,
         bytes[] calldata priceUpdate
-    ) external payable nonReentrant returns (uint256 liquidated) {
-        _updatePyth(priceUpdate);
+    ) external payable returns (uint256 liquidated) {
+        uint256 fee = _updatePyth(priceUpdate);
         PriceCache memory cache = _newPriceCache(instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
             if (_tryLiquidate(cache, positionIds[i])) ++liquidated;
         }
         emit LiquidationBatchProcessed(positionIds.length, liquidated);
+        _refundExcess(fee);
     }
 
     function harvest(uint256 maxIterations) external returns (uint256 paid) {
@@ -518,17 +520,19 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         return priceUpdate.length == 0 ? 0 : pyth.getUpdateFee(priceUpdate);
     }
 
-    function _updatePyth(bytes[] calldata priceUpdate) internal {
-        uint256 fee;
-        if (priceUpdate.length != 0) {
-            fee = pyth.getUpdateFee(priceUpdate);
-            if (msg.value < fee) revert InsufficientUpdateFee();
-            pyth.updatePriceFeeds{value: fee}(priceUpdate);
-        }
-        if (msg.value > fee) {
-            (bool ok, ) = msg.sender.call{value: msg.value - fee}("");
-            if (!ok) revert RefundFailed();
-        }
+    function _updatePyth(
+        bytes[] calldata priceUpdate
+    ) internal returns (uint256 fee) {
+        if (priceUpdate.length == 0) return 0;
+        fee = pyth.getUpdateFee(priceUpdate);
+        if (msg.value < fee) revert InsufficientUpdateFee();
+        pyth.updatePriceFeeds{value: fee}(priceUpdate);
+    }
+
+    function _refundExcess(uint256 fee) internal {
+        if (msg.value <= fee) return;
+        (bool ok, ) = msg.sender.call{value: msg.value - fee}("");
+        if (!ok) revert RefundFailed();
     }
 
     function _normalizePrice(
