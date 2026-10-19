@@ -57,15 +57,15 @@ contract ExchangeTest is Test {
         });
     }
 
-    function updateData(bytes32 id, uint64 price8) internal returns (bytes[] memory data) {
+    function updateData(bytes32 id, uint256 price8) internal returns (bytes[] memory data) {
         vm.warp(block.timestamp + 1);
         data = new bytes[](1);
         data[0] = pyth.createPriceFeedUpdateData(
-            id, int64(price8), price8 / 1000, -8, int64(price8), price8 / 1000, uint64(block.timestamp), 0
+            id, int64(uint64(price8)), uint64(price8 / 1000), -8, int64(uint64(price8)), uint64(price8 / 1000), uint64(block.timestamp), 0
         );
     }
 
-    function setPrice(bytes32 id, uint64 price8) internal {
+    function setPrice(bytes32 id, uint256 price8) internal {
         bytes[] memory data = updateData(id, price8);
         pyth.updatePriceFeeds{value: 1}(data);
     }
@@ -107,8 +107,8 @@ contract ExchangeTest is Test {
         assertEq(ex.totalBalances(), 0);
         assertEq(ex.totalLockedMargin(), 1_000e18);
         assertEq(usdc.balanceOf(address(ex)), 1_001_000e6);
-        (uint96 longSize,,,,) = ex.getMarketOi(0);
-        assertEq(longSize, uint96(10_000e18 * 1e8 / (80_000 * P8)));
+        (uint256 longSize,,,,) = ex.getMarketOi(0);
+        assertEq(longSize, 10_000e18 * 1e8 / (80_000 * P8));
     }
 
     function testCollateralMustMatchTokenPrecision() public {
@@ -136,7 +136,7 @@ contract ExchangeTest is Test {
         assertEq(ex.totalLockedMargin(), 0);
         assertEq(ex.queueHarvestAvailable(), houseBefore - uint256(pnl));
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
-        (uint96 longSize,,,,) = ex.getMarketOi(0);
+        (uint256 longSize,,,,) = ex.getMarketOi(0);
         assertEq(longSize, 0);
     }
 
@@ -220,7 +220,7 @@ contract ExchangeTest is Test {
 
     function testLiquidateLong() public {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
-        uint64 liq = ex.liquidationPrice(id);
+        uint256 liq = ex.liquidationPrice(id);
         setPrice(BTC, liq + 1);
         vm.prank(liquidator);
         vm.expectRevert(IExchange.NotLiquidatable.selector);
@@ -312,7 +312,7 @@ contract ExchangeTest is Test {
 
     function testOiCap() public {
         vm.prank(owner);
-        ex.setMarketOiCaps(0, uint128(10_000e18 * 1e8 / (80_000 * P8)), type(uint128).max);
+        ex.setMarketOiCaps(0, uint96(10_000e18 * 1e8 / (80_000 * P8)), type(uint96).max);
         open(alice, 0, true, 1_000e18, 10);
         vm.prank(bob);
         vm.expectRevert(InstrumentLib.OiCapExceeded.selector);

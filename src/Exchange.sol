@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {QueueLib} from "./QueueLib.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
@@ -13,11 +14,12 @@ import {IExchange} from "./interfaces/IExchange.sol";
 
 contract Exchange is IExchange, Ownable2Step {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
     using PositionLib for Position;
     using InstrumentLib for InstrumentLib.Instrument;
 
     struct PriceCache {
-        uint64[] prices;
+        uint256[] prices;
         bool[] loaded;
     }
 
@@ -52,13 +54,13 @@ contract Exchange is IExchange, Ownable2Step {
     mapping(address => uint256[]) internal userOpenPositionIds;
     mapping(uint256 => uint256) public positionIndex;
     QueueLib.QueueState internal debtQueue;
-    uint128 public totalBalances;
-    uint128 public totalLockedMargin;
+    uint256 public totalBalances;
+    uint256 public totalLockedMargin;
     uint256 public lossFeeRate = 0.02e18;
     uint256 public winFeeRate = 0.02e18;
     uint256 public liquidationFeeRate = 0.02e18;
-    uint128 public protocolFeeAccumulator;
-    uint128 public sideBucket;
+    uint256 public protocolFeeAccumulator;
+    uint256 public sideBucket;
     TradeMinimums public tradeMinimums = TradeMinimums(1e18, 0);
     bool public tradingPaused;
 
@@ -94,7 +96,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint256 debit = amount * collateralScale;
         if (balances[msg.sender] < debit) revert InsufficientBalance();
         balances[msg.sender] -= debit;
-        totalBalances -= uint128(debit);
+        totalBalances -= debit;
         collateralToken.safeTransfer(msg.sender, amount);
         emit Claimed(msg.sender, debit);
     }
@@ -104,7 +106,7 @@ contract Exchange is IExchange, Ownable2Step {
         _updatePyth(priceUpdate);
         Position memory p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
-        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(p, _newPriceCache(0));
+        (bool liquidatable, uint256 price, uint256 liqPrice) = _checkLiquidatable(p, _newPriceCache(0));
         if (!liquidatable) revert NotLiquidatable();
         _executeLiquidation(positionId, p, price, liqPrice);
     }
@@ -127,11 +129,9 @@ contract Exchange is IExchange, Ownable2Step {
         if (debtQueue.totalQueued == 0) revert QueueEmpty();
         uint256 available = queueHarvestAvailable();
         if (available == 0) return 0;
-        uint256 newTotalBalances;
-        (paid, newTotalBalances) = QueueLib.harvest(debtQueue, maxIterations, available, balances, totalBalances);
-        totalBalances = uint128(newTotalBalances);
-        uint128 bucket = sideBucket;
-        uint128 newBucket = debtQueue.totalQueued != 0 && paid < bucket ? bucket - uint128(paid) : 0;
+        (paid, totalBalances) = QueueLib.harvest(debtQueue, maxIterations, available, balances, totalBalances);
+        uint256 bucket = sideBucket;
+        uint256 newBucket = debtQueue.totalQueued != 0 && paid < bucket ? bucket - paid : 0;
         if (newBucket != bucket) _setSideBucket(newBucket);
     }
 
@@ -203,7 +203,7 @@ contract Exchange is IExchange, Ownable2Step {
         return debtQueue.userQueueTail[user];
     }
 
-    function queueNode(uint256 id) external view returns (address user, uint48 next, uint48 prev, uint256 amount) {
+    function queueNode(uint256 id) external view returns (address user, uint256 next, uint256 prev, uint256 amount) {
         QueueLib.Node storage n = debtQueue.nodes[id];
         return (n.user, n.next, n.prev, n.amount);
     }
@@ -219,23 +219,23 @@ contract Exchange is IExchange, Ownable2Step {
     function getMarketOi(uint32 instrumentId)
         external
         view
-        returns (uint96 longSize, uint96 shortSize, uint128 longCap, uint128 shortCap, uint64 sizeScale)
+        returns (uint256 longSize, uint256 shortSize, uint256 longCap, uint256 shortCap, uint256 sizeScale)
     {
         InstrumentLib.Oi storage oi = instruments[instrumentId].oi;
         return (oi.longSize, oi.shortSize, oi.longCap, oi.shortCap, oi.sizeScale);
     }
 
-    function liquidationPrice(uint256 positionId) external view returns (uint64) {
+    function liquidationPrice(uint256 positionId) external view returns (uint256) {
         Position memory p = positions[positionId];
         return p.liquidationPrice(instruments[p.instrumentId].config.liquidationBuffer);
     }
 
-    function previewPnl(uint256 positionId, uint64 markPrice) external view returns (int256 rawPnl, int256 pnl) {
+    function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl) {
         Position memory p = positions[positionId];
         return p.pnl(markPrice, instruments[p.instrumentId].config);
     }
 
-    function currentPrice(uint32 instrumentId) external view returns (uint64) {
+    function currentPrice(uint32 instrumentId) external view returns (uint256) {
         InstrumentLib.Instrument storage inst = instruments[instrumentId];
         inst.requireExists();
         return inst.price(pyth, maxPriceAge);
@@ -280,23 +280,23 @@ contract Exchange is IExchange, Ownable2Step {
         emit InstrumentAdded(instrumentId, config.priceId, symbol);
     }
 
-    function setInstrumentRisk(uint32 instrumentId, uint32 maxLeverage, uint256 maxNotional) external onlyOwner {
+    function setInstrumentRisk(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional) external onlyOwner {
         instruments[instrumentId].setRisk(maxLeverage, maxNotional);
         emit InstrumentRiskUpdated(instrumentId, maxLeverage, maxNotional);
     }
 
     function setInstrumentImpactConfig(
         uint32 instrumentId,
-        uint128 impactC,
-        uint96 impactB,
-        uint96 impactA,
-        uint64 profitHaircut
+        uint256 impactC,
+        uint256 impactB,
+        uint256 impactA,
+        uint256 profitHaircut
     ) external onlyOwner {
         instruments[instrumentId].setImpactConfig(impactC, impactB, impactA, profitHaircut);
         emit InstrumentImpactConfigUpdated(instrumentId, impactC, impactB, impactA, profitHaircut);
     }
 
-    function setMarketOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external onlyOwner {
+    function setMarketOiCaps(uint32 instrumentId, uint96 longCap, uint96 shortCap) external onlyOwner {
         instruments[instrumentId].setOiCaps(longCap, shortCap);
         emit MarketOiCapsUpdated(instrumentId, longCap, shortCap);
     }
@@ -338,7 +338,7 @@ contract Exchange is IExchange, Ownable2Step {
         _requireTradingActive();
         _updatePyth(priceUpdate);
         InstrumentLib.Instrument storage inst = instruments[instrumentId];
-        uint64 price = _checkOpenParams(inst, collateral, leverage);
+        uint256 price = _checkOpenParams(inst, collateral, leverage);
         bool useCredits;
         (fromWallet, useCredits) = _lockMargin(trader, collateral);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
@@ -346,7 +346,7 @@ contract Exchange is IExchange, Ownable2Step {
         Position memory p = Position({
             owner: trader,
             instrumentId: instrumentId,
-            entryPrice: price,
+            entryPrice: price.toUint64(),
             collateral: collateral,
             leverage: leverage,
             openedAt: uint64(block.timestamp),
@@ -360,13 +360,13 @@ contract Exchange is IExchange, Ownable2Step {
         uint256[] storage ids = userOpenPositionIds[trader];
         ids.push(positionId);
         positionIndex[positionId] = ids.length;
-        emit PositionOpened(positionId, trader, instrumentId, isLong, useCredits, price, collateral, leverage);
+        emit PositionOpened(positionId, trader, instrumentId, isLong, useCredits, p.entryPrice, collateral, leverage);
     }
 
-    function _checkOpenParams(InstrumentLib.Instrument storage inst, uint128 collateral, uint32 leverage)
+    function _checkOpenParams(InstrumentLib.Instrument storage inst, uint256 collateral, uint256 leverage)
         internal
         view
-        returns (uint64)
+        returns (uint256)
     {
         uint256 notional = inst.checkOpen(collateral, leverage);
         TradeMinimums memory minimums = tradeMinimums;
@@ -375,7 +375,7 @@ contract Exchange is IExchange, Ownable2Step {
         return inst.price(pyth, maxPriceAge);
     }
 
-    function _lockMargin(address trader, uint128 collateral) internal returns (uint256 fromWallet, bool usedCredits) {
+    function _lockMargin(address trader, uint256 collateral) internal returns (uint256 fromWallet, bool usedCredits) {
         if (debtQueue.userQueuedTotal[trader] >= collateral) {
             QueueLib.consume(debtQueue, trader, collateral);
             return (0, true);
@@ -385,9 +385,9 @@ contract Exchange is IExchange, Ownable2Step {
         fromBalance -= fromBalance % collateralScale;
         if (fromBalance != 0) {
             balances[trader] = balance - fromBalance;
-            totalBalances -= uint128(fromBalance);
+            totalBalances -= fromBalance;
         }
-        uint256 remaining = uint256(collateral) - fromBalance;
+        uint256 remaining = collateral - fromBalance;
         if (remaining != 0) {
             fromWallet = remaining / collateralScale;
             if (fromWallet * collateralScale != remaining) {
@@ -428,7 +428,7 @@ contract Exchange is IExchange, Ownable2Step {
         if (!p.isOpen) revert PositionNotOpen();
         if (p.owner != trader) revert NotPositionOwner();
         InstrumentLib.Instrument storage inst = instruments[p.instrumentId];
-        uint64 price = _cachedPrice(cache, p.instrumentId, inst);
+        uint256 price = _cachedPrice(cache, p.instrumentId, inst);
         positions[positionId].isOpen = false;
         if (!p.usedCredits) totals.marginReleased += p.collateral;
         inst.decreaseOi(p.isLong, p.size(inst.oi.sizeScale));
@@ -438,7 +438,7 @@ contract Exchange is IExchange, Ownable2Step {
         emit PositionClosed(positionId, trader, price, rawPnl, pnl, p.usedCredits, fees);
     }
 
-    function _settleClose(address trader, uint128 collateral, int256 pnl, bool usedCredits, CloseTotals memory totals)
+    function _settleClose(address trader, uint256 collateral, int256 pnl, bool usedCredits, CloseTotals memory totals)
         internal
         returns (uint256 fees)
     {
@@ -477,13 +477,13 @@ contract Exchange is IExchange, Ownable2Step {
 
     function _applyCloseTotals(address trader, CloseTotals memory totals) internal {
         if (totals.marginReleased != 0) {
-            totalLockedMargin -= uint128(totals.marginReleased);
+            totalLockedMargin -= totals.marginReleased;
         }
         uint256 credited = totals.marginReturned + totals.paidNow;
         if (credited != 0) _creditBalance(trader, credited);
-        if (totals.fees != 0) protocolFeeAccumulator += uint128(totals.fees);
+        if (totals.fees != 0) protocolFeeAccumulator += totals.fees;
         if (totals.sideBucket != 0) {
-            _setSideBucket(sideBucket + uint128(totals.sideBucket));
+            _setSideBucket(sideBucket + totals.sideBucket);
         }
         emit PositionsClosed(trader, credited, balances[trader], totals.fees);
     }
@@ -491,7 +491,7 @@ contract Exchange is IExchange, Ownable2Step {
     function _tryLiquidate(PriceCache memory cache, uint256 positionId) internal returns (bool) {
         Position memory p = positions[positionId];
         if (!p.isOpen) return false;
-        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(p, cache);
+        (bool liquidatable, uint256 price, uint256 liqPrice) = _checkLiquidatable(p, cache);
         if (!liquidatable) return false;
         _executeLiquidation(positionId, p, price, liqPrice);
         return true;
@@ -500,18 +500,18 @@ contract Exchange is IExchange, Ownable2Step {
     function _checkLiquidatable(Position memory p, PriceCache memory cache)
         internal
         view
-        returns (bool liquidatable, uint64 price, uint64 liqPrice)
+        returns (bool liquidatable, uint256 price, uint256 liqPrice)
     {
         InstrumentLib.Instrument storage inst = instruments[p.instrumentId];
         price = _cachedPrice(cache, p.instrumentId, inst);
         (liquidatable, liqPrice) = p.isLiquidatable(price, inst.config.liquidationBuffer);
     }
 
-    function _executeLiquidation(uint256 positionId, Position memory p, uint64 price, uint64 liqPrice) internal {
+    function _executeLiquidation(uint256 positionId, Position memory p, uint256 price, uint256 liqPrice) internal {
         positions[positionId].isOpen = false;
         address trader = p.owner;
         _removeUserPosition(trader, positionId);
-        uint128 collateral = p.collateral;
+        uint256 collateral = p.collateral;
         InstrumentLib.Instrument storage inst = instruments[p.instrumentId];
         inst.decreaseOi(p.isLong, p.size(inst.oi.sizeScale));
 
@@ -520,8 +520,8 @@ contract Exchange is IExchange, Ownable2Step {
         if (!usedCredits) {
             totalLockedMargin -= collateral;
             if (debtQueue.totalQueued == 0) {
-                fee = (uint256(collateral) * liquidationFeeRate) / PRECISION;
-                if (fee != 0) protocolFeeAccumulator += uint128(fee);
+                fee = (collateral * liquidationFeeRate) / PRECISION;
+                if (fee != 0) protocolFeeAccumulator += fee;
             } else {
                 _setSideBucket(sideBucket + collateral);
             }
@@ -538,22 +538,22 @@ contract Exchange is IExchange, Ownable2Step {
 
     function _creditBalance(address user, uint256 amount) internal {
         balances[user] += amount;
-        totalBalances += uint128(amount);
+        totalBalances += amount;
     }
 
-    function _setSideBucket(uint128 value) internal {
+    function _setSideBucket(uint256 value) internal {
         sideBucket = value;
         emit SideBucketUpdated(value);
     }
 
     function _newPriceCache(uint256 length) internal pure returns (PriceCache memory) {
-        return PriceCache(new uint64[](length), new bool[](length));
+        return PriceCache(new uint256[](length), new bool[](length));
     }
 
     function _cachedPrice(PriceCache memory cache, uint32 instrumentId, InstrumentLib.Instrument storage inst)
         internal
         view
-        returns (uint64)
+        returns (uint256)
     {
         if (instrumentId >= cache.loaded.length || instrumentId >= cache.prices.length) {
             return inst.price(pyth, maxPriceAge);

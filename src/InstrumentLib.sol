@@ -3,8 +3,11 @@ pragma solidity ^0.8.24;
 
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 library InstrumentLib {
+    using SafeCast for uint256;
+
     error InvalidInstrumentConfig();
     error InvalidSizeScale();
     error InvalidInstrumentId();
@@ -18,22 +21,22 @@ library InstrumentLib {
     int32 internal constant PRICE_EXPO = -8;
 
     struct Config {
-        uint96 impactA;
-        uint96 impactB;
+        uint256 impactA;
+        uint256 impactB;
         bytes32 priceId;
-        uint32 maxLeverage;
-        uint120 maxNotional;
-        uint64 liquidationBuffer;
-        uint64 profitHaircut;
-        uint128 impactC;
+        uint256 maxLeverage;
+        uint256 maxNotional;
+        uint256 liquidationBuffer;
+        uint256 profitHaircut;
+        uint256 impactC;
     }
 
     struct Oi {
         uint96 longSize;
         uint96 shortSize;
         uint64 sizeScale;
-        uint128 longCap;
-        uint128 shortCap;
+        uint96 longCap;
+        uint96 shortCap;
     }
 
     struct Instrument {
@@ -58,8 +61,8 @@ library InstrumentLib {
         if (sizeScale == 0) revert InvalidSizeScale();
         self.config = config;
         self.oi.sizeScale = sizeScale;
-        self.oi.longCap = type(uint128).max;
-        self.oi.shortCap = type(uint128).max;
+        self.oi.longCap = type(uint96).max;
+        self.oi.shortCap = type(uint96).max;
     }
 
     function requireExists(Instrument storage self) internal view {
@@ -70,27 +73,23 @@ library InstrumentLib {
 
     function setRisk(
         Instrument storage self,
-        uint32 maxLeverage,
+        uint256 maxLeverage,
         uint256 maxNotional
     ) internal {
         requireExists(self);
-        if (
-            maxLeverage == 0 ||
-            maxNotional == 0 ||
-            maxNotional > type(uint120).max
-        ) {
+        if (maxLeverage == 0 || maxNotional == 0) {
             revert InvalidInstrumentConfig();
         }
         self.config.maxLeverage = maxLeverage;
-        self.config.maxNotional = uint120(maxNotional);
+        self.config.maxNotional = maxNotional;
     }
 
     function setImpactConfig(
         Instrument storage self,
-        uint128 impactC,
-        uint96 impactB,
-        uint96 impactA,
-        uint64 profitHaircut
+        uint256 impactC,
+        uint256 impactB,
+        uint256 impactA,
+        uint256 profitHaircut
     ) internal {
         requireExists(self);
         if (impactC == 0 || impactA == 0 || profitHaircut >= WAD) {
@@ -104,8 +103,8 @@ library InstrumentLib {
 
     function setOiCaps(
         Instrument storage self,
-        uint128 longCap,
-        uint128 shortCap
+        uint96 longCap,
+        uint96 shortCap
     ) internal {
         requireExists(self);
         self.oi.longCap = longCap;
@@ -114,15 +113,15 @@ library InstrumentLib {
 
     function checkOpen(
         Instrument storage self,
-        uint128 collateral,
-        uint32 leverage
+        uint256 collateral,
+        uint256 leverage
     ) internal view returns (uint256 notional) {
         requireExists(self);
         if (leverage == 0) revert LeverageTooLow();
         if (leverage > self.config.maxLeverage) {
             revert LeverageTooHigh();
         }
-        notional = uint256(collateral) * leverage;
+        notional = collateral * leverage;
         if (notional > self.config.maxNotional) {
             revert PositionTooLarge();
         }
@@ -131,34 +130,34 @@ library InstrumentLib {
     function increaseOi(
         Instrument storage self,
         bool isLong,
-        uint96 size
+        uint256 size
     ) internal {
         Oi storage oi = self.oi;
         if (isLong) {
-            uint96 newLong = oi.longSize + size;
+            uint256 newLong = oi.longSize + size;
             if (newLong > oi.longCap) revert OiCapExceeded();
-            oi.longSize = newLong;
+            oi.longSize = newLong.toUint96();
         } else {
-            uint96 newShort = oi.shortSize + size;
+            uint256 newShort = oi.shortSize + size;
             if (newShort > oi.shortCap) revert OiCapExceeded();
-            oi.shortSize = newShort;
+            oi.shortSize = newShort.toUint96();
         }
     }
 
     function decreaseOi(
         Instrument storage self,
         bool isLong,
-        uint96 size
+        uint256 size
     ) internal {
-        if (isLong) self.oi.longSize -= size;
-        else self.oi.shortSize -= size;
+        if (isLong) self.oi.longSize -= size.toUint96();
+        else self.oi.shortSize -= size.toUint96();
     }
 
     function price(
         Instrument storage self,
         IPyth pyth,
         uint256 maxPriceAge
-    ) internal view returns (uint64) {
+    ) internal view returns (uint256) {
         PythStructs.Price memory p = pyth.getPriceNoOlderThan(
             self.config.priceId,
             maxPriceAge
@@ -169,17 +168,14 @@ library InstrumentLib {
     function normalizePrice(
         int64 rawPrice,
         int32 expo
-    ) internal pure returns (uint64) {
+    ) internal pure returns (uint256 value) {
         if (rawPrice <= 0) revert InvalidPrice();
-        uint256 value = uint256(uint64(rawPrice));
+        value = uint256(uint64(rawPrice));
         if (expo < PRICE_EXPO) {
             value /= 10 ** uint256(uint32(PRICE_EXPO - expo));
         } else if (expo > PRICE_EXPO) {
             value *= 10 ** uint256(uint32(expo - PRICE_EXPO));
         }
-        if (value == 0 || value > type(uint64).max) {
-            revert InvalidPrice();
-        }
-        return uint64(value);
+        if (value == 0) revert InvalidPrice();
     }
 }

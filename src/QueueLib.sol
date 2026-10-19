@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 library QueueLib {
+    using SafeCast for uint256;
+
     uint256 internal constant WAD = 1e18;
     uint256 internal constant MAX_MERGE = 64;
 
@@ -31,7 +35,6 @@ library QueueLib {
         mapping(address => uint256) userQueueTail;
     }
 
-    error QueueIdOverflow();
     error InvalidCompactionRange();
 
     event Enqueued(address indexed user, uint256 indexed id, uint256 amount);
@@ -206,18 +209,18 @@ library QueueLib {
     }
 
     function computePositionPnl(
-        uint64 entryPrice,
-        uint64 markPrice,
-        uint128 collateral,
-        uint32 leverage,
+        uint256 entryPrice,
+        uint256 markPrice,
+        uint256 collateral,
+        uint256 leverage,
         bool isLong,
         uint256 profitHaircut,
         uint256 impactA,
         uint256 impactB,
         uint256 impactC
     ) internal pure returns (int256 rawPnl, int256 pnl) {
-        uint64 tolerance = entryPrice / 50_000;
-        uint64 exitPrice;
+        uint256 tolerance = entryPrice / 50_000;
+        uint256 exitPrice;
         if (isLong) {
             if (markPrice > entryPrice + tolerance) exitPrice = markPrice - tolerance;
             else if (markPrice > entryPrice) exitPrice = entryPrice;
@@ -228,29 +231,29 @@ library QueueLib {
             else exitPrice = markPrice;
         }
         int256 priceDelta = isLong
-            ? int256(uint256(exitPrice)) - int256(uint256(entryPrice))
-            : int256(uint256(entryPrice)) - int256(uint256(exitPrice));
-        rawPnl = int256(uint256(collateral)) * int256(uint256(leverage)) * priceDelta / int256(uint256(entryPrice));
+            ? int256(exitPrice) - int256(entryPrice)
+            : int256(entryPrice) - int256(exitPrice);
+        rawPnl = int256(collateral) * int256(leverage) * priceDelta / int256(entryPrice);
         if (rawPnl > 0) {
             pnl = applyImpact(rawPnl, entryPrice, exitPrice, profitHaircut, impactA, impactB, impactC);
         } else {
-            int256 maxLoss = -int256(uint256(collateral));
+            int256 maxLoss = -int256(collateral);
             pnl = rawPnl < maxLoss ? maxLoss : rawPnl;
         }
     }
 
     function applyImpact(
         int256 pnl,
-        uint64 entryPrice,
-        uint64 exitPrice,
+        uint256 entryPrice,
+        uint256 exitPrice,
         uint256 profitHaircut,
         uint256 impactA,
         uint256 impactB,
         uint256 impactC
     ) internal pure returns (int256) {
-        uint64 move = exitPrice >= entryPrice ? exitPrice - entryPrice : entryPrice - exitPrice;
+        uint256 move = exitPrice >= entryPrice ? exitPrice - entryPrice : entryPrice - exitPrice;
         if (move == 0) return 0;
-        uint256 denominator = _impactDenominator(uint256(move) * WAD / entryPrice, impactA, impactB, impactC);
+        uint256 denominator = _impactDenominator(move * WAD / entryPrice, impactA, impactB, impactC);
         if (denominator == 0) return 0;
         uint256 factor = (WAD - profitHaircut) * WAD / denominator;
         return pnl * int256(factor) / int256(WAD);
@@ -272,7 +275,7 @@ library QueueLib {
     function settle(
         QueueState storage q,
         address user,
-        uint128 collateral,
+        uint256 collateral,
         int256 pnl,
         bool usedCredits,
         uint256 winFeeRate,
@@ -285,7 +288,7 @@ library QueueLib {
         if (pnl > 0) {
             fee = uint256(pnl) * winFeeRate / WAD;
             if (usedCredits) {
-                owed = uint256(collateral) + uint256(pnl) - fee;
+                owed = collateral + uint256(pnl) - fee;
             } else {
                 result.marginReturned = collateral;
                 owed = uint256(pnl) - fee;
@@ -294,7 +297,7 @@ library QueueLib {
             uint256 loss;
             (loss, fee) = _lossAndFee(collateral, pnl, lossFeeRate);
             if (!usedCredits) {
-                result.marginReturned = uint256(collateral) - loss;
+                result.marginReturned = collateral - loss;
                 if (queueEmpty) {
                     result.stakerFee = fee >> 1;
                     result.devFee = fee - result.stakerFee;
@@ -303,7 +306,7 @@ library QueueLib {
                 }
                 return result;
             }
-            owed = uint256(collateral) - loss;
+            owed = collateral - loss;
         }
 
         if (queueEmpty) {
@@ -319,7 +322,7 @@ library QueueLib {
         if (result.queued != 0) _enqueue(q, user, result.queued);
     }
 
-    function _lossAndFee(uint128 collateral, int256 pnl, uint256 lossFeeRate)
+    function _lossAndFee(uint256 collateral, int256 pnl, uint256 lossFeeRate)
         private
         pure
         returns (uint256 loss, uint256 fee)
@@ -392,12 +395,11 @@ library QueueLib {
     function _enqueue(QueueState storage q, address user, uint256 amount) private {
         if (amount == 0) return;
         uint256 id = q.nextId++;
-        if (id > type(uint48).max) revert QueueIdOverflow();
         uint256 tail = q.userQueueTail[user];
-        q.nodes[id] = Node({user: user, next: 0, prev: uint48(tail), amount: amount});
+        q.nodes[id] = Node({user: user, next: 0, prev: tail.toUint48(), amount: amount});
         if (q.head == 0) q.head = id;
         if (tail == 0) q.userQueueHead[user] = id;
-        else q.nodes[tail].next = uint48(id);
+        else q.nodes[tail].next = id.toUint48();
         q.userQueueTail[user] = id;
         q.totalQueued += amount;
         q.userQueuedTotal[user] += amount;

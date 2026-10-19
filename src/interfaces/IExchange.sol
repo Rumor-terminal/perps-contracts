@@ -14,7 +14,6 @@ interface IExchange {
     error TradingPaused();
     error TradeBelowMinimum();
     error NotionalBelowMinimum();
-    error SizeOverflow();
     error InsufficientBalance();
     error PositionNotOpen();
     error NotPositionOwner();
@@ -32,11 +31,11 @@ interface IExchange {
     event FeeRatesUpdated(uint256 lossFeeRate, uint256 winFeeRate, uint256 liquidationFeeRate);
     event TradeMinimumsUpdated(uint128 minCollateral, uint128 minNotional);
     event InstrumentAdded(uint32 indexed instrumentId, bytes32 priceId, string symbol);
-    event InstrumentRiskUpdated(uint32 indexed instrumentId, uint32 maxLeverage, uint256 maxNotional);
+    event InstrumentRiskUpdated(uint32 indexed instrumentId, uint256 maxLeverage, uint256 maxNotional);
     event InstrumentImpactConfigUpdated(
-        uint32 indexed instrumentId, uint128 impactC, uint96 impactB, uint96 impactA, uint64 profitHaircut
+        uint32 indexed instrumentId, uint256 impactC, uint256 impactB, uint256 impactA, uint256 profitHaircut
     );
-    event MarketOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
+    event MarketOiCapsUpdated(uint32 indexed instrumentId, uint96 longCap, uint96 shortCap);
     event PositionOpened(
         uint256 indexed positionId,
         address indexed trader,
@@ -50,7 +49,7 @@ interface IExchange {
     event PositionClosed(
         uint256 indexed positionId,
         address indexed trader,
-        uint64 exitPrice,
+        uint256 exitPrice,
         int256 rawPnl,
         int256 pnl,
         bool usedCredits,
@@ -60,8 +59,8 @@ interface IExchange {
     event Liquidated(
         uint256 indexed positionId,
         address indexed trader,
-        uint64 price,
-        uint64 liquidationPrice,
+        uint256 price,
+        uint256 liquidationPrice,
         bool usedCredits,
         uint256 fee
     );
@@ -130,7 +129,7 @@ interface IExchange {
 
     function userQueueTail(address user) external view returns (uint256);
 
-    function queueNode(uint256 id) external view returns (address user, uint48 next, uint48 prev, uint256 amount);
+    function queueNode(uint256 id) external view returns (address user, uint256 next, uint256 prev, uint256 amount);
 
     function positionOwner(uint256 positionId) external view returns (address);
 
@@ -139,13 +138,13 @@ interface IExchange {
     function getMarketOi(uint32 instrumentId)
         external
         view
-        returns (uint96 longSize, uint96 shortSize, uint128 longCap, uint128 shortCap, uint64 sizeScale);
+        returns (uint256 longSize, uint256 shortSize, uint256 longCap, uint256 shortCap, uint256 sizeScale);
 
-    function liquidationPrice(uint256 positionId) external view returns (uint64);
+    function liquidationPrice(uint256 positionId) external view returns (uint256);
 
-    function previewPnl(uint256 positionId, uint64 markPrice) external view returns (int256 rawPnl, int256 pnl);
+    function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl);
 
-    function currentPrice(uint32 instrumentId) external view returns (uint64);
+    function currentPrice(uint32 instrumentId) external view returns (uint256);
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256);
 
@@ -161,15 +160,15 @@ interface IExchange {
         external
         returns (uint32 instrumentId);
 
-    function setInstrumentRisk(uint32 instrumentId, uint32 maxLeverage, uint256 maxNotional) external;
+    function setInstrumentRisk(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional) external;
 
     function setInstrumentImpactConfig(
         uint32 instrumentId,
-        uint128 impactC,
-        uint96 impactB,
-        uint96 impactA,
-        uint64 profitHaircut
+        uint256 impactC,
+        uint256 impactB,
+        uint256 impactA,
+        uint256 profitHaircut
     ) external;
 
-    function setMarketOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external;
+    function setMarketOiCaps(uint32 instrumentId, uint96 longCap, uint96 shortCap) external;
 }
