@@ -252,16 +252,16 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         emit InstrumentAdded(instrumentId, config.priceId, symbol);
     }
 
-    function setInstrumentRisk(
+    function setRiskParams(
         uint32 instrumentId,
         uint256 maxLeverage,
         uint256 maxNotional
     ) external onlyOwner {
-        instruments[instrumentId].setRisk(maxLeverage, maxNotional);
+        instruments[instrumentId].setRiskParams(maxLeverage, maxNotional);
         emit InstrumentRiskUpdated(instrumentId, maxLeverage, maxNotional);
     }
 
-    function setInstrumentImpactConfig(
+    function setImpactConfig(
         uint32 instrumentId,
         uint256 impactC,
         uint256 impactB,
@@ -283,7 +283,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         );
     }
 
-    function setMarketOiCaps(
+    function setOiCaps(
         uint32 instrumentId,
         uint96 longCap,
         uint96 shortCap

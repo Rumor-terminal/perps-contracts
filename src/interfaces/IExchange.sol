@@ -112,9 +112,9 @@ interface IExchange {
         external
         returns (uint32 instrumentId);
 
-    function setInstrumentRisk(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional) external;
+    function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional) external;
 
-    function setInstrumentImpactConfig(
+    function setImpactConfig(
         uint32 instrumentId,
         uint256 impactC,
         uint256 impactB,
@@ -122,5 +122,5 @@ interface IExchange {
         uint256 profitHaircut
     ) external;
 
-    function setMarketOiCaps(uint32 instrumentId, uint96 longCap, uint96 shortCap) external;
+    function setOiCaps(uint32 instrumentId, uint96 longCap, uint96 shortCap) external;
 }

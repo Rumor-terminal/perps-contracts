@@ -73,7 +73,7 @@ library InstrumentLib {
         }
     }
 
-    function setRisk(
+    function setRiskParams(
         Instrument storage self,
         uint256 maxLeverage,
         uint256 maxNotional

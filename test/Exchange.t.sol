@@ -312,7 +312,7 @@ contract ExchangeTest is Test {
 
     function testOiCap() public {
         vm.prank(owner);
-        ex.setMarketOiCaps(0, uint96(10_000e18 * 1e8 / (80_000 * P8)), type(uint96).max);
+        ex.setOiCaps(0, uint96(10_000e18 * 1e8 / (80_000 * P8)), type(uint96).max);
         open(alice, 0, true, 1_000e18, 10);
         vm.prank(bob);
         vm.expectRevert(InstrumentLib.OiCapExceeded.selector);
