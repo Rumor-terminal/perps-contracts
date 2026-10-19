@@ -148,21 +148,6 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         emit PositionsClosed(msg.sender, paid, queued, totals.fees);
     }
 
-    function liquidate(uint256 positionId, bytes[] calldata priceUpdate)
-        external
-        payable
-        whenTradingActive
-        withPriceUpdate(priceUpdate)
-    {
-        Position memory p = positions[positionId];
-        if (!p.isOpen) revert PositionNotOpen();
-
-        (bool liquidatable, uint256 price, uint256 liqPrice) = _checkLiquidatable(p, _newPriceCache(0));
-        if (!liquidatable) revert NotLiquidatable();
-
-        _executeLiquidation(positionId, p, price, liqPrice);
-    }
-
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
         external
         payable
@@ -301,11 +286,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     {
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(cache, p.instrumentId, instrument);
-
-        positions[positionId].isOpen = false;
-        totalLockedMargin -= p.collateral - p.debited;
-        instrument.decreaseOi(p.isLong, p.size(instrument.oi.sizeScale));
-        userOpenPositionIds[p.owner].remove(positionId);
+        _release(positionId, p);
 
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
         uint256 fee = _accumulateClose(totals, p.collateral, p.debited, pnl);
@@ -343,37 +324,27 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         Position memory p = positions[positionId];
         if (!p.isOpen) return false;
 
-        (bool liquidatable, uint256 price, uint256 liqPrice) = _checkLiquidatable(p, cache);
+        Instrument storage instrument = instruments[p.instrumentId];
+        uint256 price = _cachedPrice(cache, p.instrumentId, instrument);
+        (bool liquidatable, uint256 liqPrice) = p.isLiquidatable(price, instrument.config.liquidationBuffer);
         if (!liquidatable) return false;
 
-        _executeLiquidation(positionId, p, price, liqPrice);
+        uint256 cash = _release(positionId, p);
+        if (cash != 0) _settleLoss(cash);
+        uint256 fee = (p.collateral * liquidationFeeRate) / PRECISION;
+        if (fee != 0) protocolFeeAccumulator += fee;
+        emit Liquidated(positionId, p.owner, price, liqPrice, fee);
         return true;
     }
 
-    function _checkLiquidatable(Position memory p, PriceCache memory cache)
-        internal
-        view
-        returns (bool liquidatable, uint256 price, uint256 liqPrice)
-    {
+    function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {
+        cash = p.collateral - p.debited;
         Instrument storage instrument = instruments[p.instrumentId];
-        price = _cachedPrice(cache, p.instrumentId, instrument);
-        (liquidatable, liqPrice) = p.isLiquidatable(price, instrument.config.liquidationBuffer);
-    }
-
-    function _executeLiquidation(uint256 positionId, Position memory p, uint256 price, uint256 liqPrice) internal {
-        Instrument storage instrument = instruments[p.instrumentId];
-        uint256 collateral = p.collateral;
-        uint256 cash = collateral - p.debited;
 
         positions[positionId].isOpen = false;
         totalLockedMargin -= cash;
         instrument.decreaseOi(p.isLong, p.size(instrument.oi.sizeScale));
         userOpenPositionIds[p.owner].remove(positionId);
-
-        if (cash != 0) _settleLoss(cash);
-        uint256 fee = (collateral * liquidationFeeRate) / PRECISION;
-        if (fee != 0) protocolFeeAccumulator += fee;
-        emit Liquidated(positionId, p.owner, price, liqPrice, fee);
     }
 
     function _newPriceCache(uint256 length) internal pure returns (PriceCache memory) {

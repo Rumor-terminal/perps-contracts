@@ -6,8 +6,6 @@ import {Config, Oi} from "../InstrumentLib.sol";
 interface IExchange {
     error UnsupportedCollateralDecimals();
     error TradingPaused();
-    error PositionNotOpen();
-    error NotLiquidatable();
     error EmptyCloseList();
     error CollateralPrecision();
     error ZeroAmount();
@@ -55,8 +53,6 @@ interface IExchange {
     ) external payable returns (uint256 positionId);
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
-
-    function liquidate(uint256 positionId, bytes[] calldata priceUpdate) external payable;
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
         external
