@@ -105,7 +105,6 @@ contract ExchangeTest is Test {
         assertEq(ex.balances(alice), 0);
         assertEq(ex.totalBalances(), 0);
         assertEq(ex.totalLockedMargin(), 1_000e18);
-        assertEq(ex.treasury(), 1_000_000e18 + 1_000e18);
         assertEq(usdc.balanceOf(address(ex)), 1_001_000e6);
         (uint96 longSize,,,,) = ex.getMarketOi(0);
         assertEq(longSize, uint96(10_000e18 * 1e8 / (80_000 * P8)));
@@ -146,13 +145,13 @@ contract ExchangeTest is Test {
         close(alice, id);
         uint256 unclaimed = ex.balances(alice);
         assertGt(unclaimed, 1_000e18);
-        uint256 treasuryBefore = ex.treasury();
+        uint256 heldBefore = usdc.balanceOf(address(ex));
 
         vm.prank(alice);
         ex.claim(500e6);
         assertEq(ex.balances(alice), unclaimed - 500e18);
         assertEq(usdc.balanceOf(alice), WALLET - 1_000e6 + 500e6);
-        assertEq(ex.treasury(), treasuryBefore - 500e18);
+        assertEq(usdc.balanceOf(address(ex)), heldBefore - 500e6);
 
         vm.prank(alice);
         vm.expectRevert(IExchange.InsufficientBalance.selector);
@@ -468,7 +467,6 @@ contract ExchangeTest is Test {
             }
         }
         uint256 liabilities = uint256(ex.totalBalances()) + ex.totalLockedMargin() + ex.protocolFeeAccumulator();
-        assertEq(usdc.balanceOf(address(ex)), ex.treasury() / 1e12);
-        assertGe(ex.treasury() + ex.totalQueued() + 1, liabilities);
+        assertGe(usdc.balanceOf(address(ex)) * 1e12 + ex.totalQueued() + 1, liabilities);
     }
 }

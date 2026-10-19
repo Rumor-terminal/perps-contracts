@@ -56,7 +56,6 @@ contract Exchange is IExchange, Ownable2Step {
     uint256 public nextPositionId;
     mapping(address => uint256[]) internal userOpenPositionIds;
     mapping(uint256 => uint256) public positionIndex;
-    uint256 public treasury;
     QueueLib.QueueState internal debtQueue;
     uint128 public totalBalances;
     uint128 public totalLockedMargin;
@@ -221,7 +220,6 @@ contract Exchange is IExchange, Ownable2Step {
         if (balances[msg.sender] < debit) revert InsufficientBalance();
         balances[msg.sender] -= debit;
         totalBalances -= uint128(debit);
-        treasury -= debit;
         collateralToken.safeTransfer(msg.sender, amount);
         emit Claimed(msg.sender, debit);
     }
@@ -229,9 +227,7 @@ contract Exchange is IExchange, Ownable2Step {
     function fundHouse(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 credit = amount * collateralScale;
-        treasury += credit;
-        emit HouseFunded(msg.sender, credit);
+        emit HouseFunded(msg.sender, amount * collateralScale);
     }
 
     function openPosition(
@@ -388,7 +384,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint256 liabilities = uint256(totalBalances) +
             totalLockedMargin +
             protocolFeeAccumulator;
-        uint256 held = treasury;
+        uint256 held = collateralToken.balanceOf(address(this)) * collateralScale;
         return held > liabilities ? held - liabilities : 0;
     }
 
@@ -654,7 +650,6 @@ contract Exchange is IExchange, Ownable2Step {
             fromWallet = remaining / collateralScale;
             if (fromWallet * collateralScale != remaining)
                 revert CollateralPrecision();
-            treasury += remaining;
         }
         totalLockedMargin += collateral;
     }
