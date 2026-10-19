@@ -71,7 +71,7 @@ interface IExchange {
     error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();
-    error RefundFailed();
+    error NativeTransferFailed();
     error InvalidPrice();
 
     event TradingPausedUpdated(bool paused);
@@ -209,6 +209,8 @@ interface IExchange {
     ) external returns (uint256 count, uint256 amount, uint256 intoId);
 
     function claimProtocolFees() external;
+
+    function withdrawNative(address to, uint256 amount) external;
 
     function queueHarvestAvailable() external view returns (uint256);
 

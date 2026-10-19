@@ -253,14 +253,27 @@ contract ExchangeTest is Test {
         assertTrue(bOpen);
     }
 
-    function testPriceUpdateInTxAndFeeRefund() public {
+    function testPriceUpdateInTxKeepsExcessOnContract() public {
         bytes[] memory data = updateData(BTC, 90_000 * P8);
         uint256 balBefore = alice.balance;
         vm.prank(alice);
         uint256 id = ex.openPosition{value: 0.01 ether}(0, true, 1_000e18, 10, data);
         (,, uint64 entry,,,,,,) = ex.positions(id);
         assertEq(entry, 90_000 * P8);
-        assertEq(alice.balance, balBefore - 1);
+        assertEq(alice.balance, balBefore - 0.01 ether);
+        assertEq(address(ex).balance, 0.01 ether - 1);
+
+        bytes[] memory next = updateData(BTC, 91_000 * P8);
+        vm.prank(bob);
+        ex.openPosition(0, true, 1_000e18, 10, next);
+        assertEq(address(ex).balance, 0.01 ether - 2);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        ex.withdrawNative(alice, 1);
+        vm.prank(owner);
+        ex.withdrawNative(owner, 0.01 ether - 2);
+        assertEq(owner.balance, 0.01 ether - 2);
         assertEq(address(ex).balance, 0);
     }
 

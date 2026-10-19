@@ -202,14 +202,13 @@ contract Exchange is IExchange, Ownable2Step {
         _requireInstrument(instrumentId);
         MarketPause storage mp = marketPause[instrumentId];
         if (mp.paused) revert MarketAlreadyPaused();
-        uint256 fee = _updatePyth(priceUpdate);
+        _updatePyth(priceUpdate);
         (uint64 bid, uint64 ask) = _bidAsk(instruments[instrumentId].priceId);
         mp.paused = true;
         mp.bid = bid;
         mp.ask = ask;
         mp.pausedAt = uint64(block.timestamp);
         emit MarketPaused(instrumentId, bid, ask, uint64(block.timestamp));
-        _refundExcess(fee);
     }
 
     function unpauseMarket(uint32) external pure {
@@ -242,7 +241,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint32 leverage,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId) {
-        uint256 fee = _updatePyth(priceUpdate);
+        _updatePyth(priceUpdate);
         uint256 fromWallet;
         (positionId, fromWallet) = _openPosition(
             msg.sender,
@@ -257,23 +256,21 @@ contract Exchange is IExchange, Ownable2Step {
                 address(this),
                 fromWallet
             );
-        _refundExcess(fee);
     }
 
     function closePositions(
         uint256[] calldata positionIds,
         bytes[] calldata priceUpdate
     ) external payable {
-        uint256 fee = _updatePyth(priceUpdate);
+        _updatePyth(priceUpdate);
         _closePositions(msg.sender, positionIds);
-        _refundExcess(fee);
     }
 
     function liquidate(
         uint256 positionId,
         bytes[] calldata priceUpdate
     ) external payable {
-        uint256 fee = _updatePyth(priceUpdate);
+        _updatePyth(priceUpdate);
         Position storage p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
         (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
@@ -282,20 +279,18 @@ contract Exchange is IExchange, Ownable2Step {
         );
         if (!liquidatable) revert NotLiquidatable();
         _executeLiquidation(positionId, p, price, liqPrice);
-        _refundExcess(fee);
     }
 
     function liquidateBatch(
         uint256[] calldata positionIds,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 liquidated) {
-        uint256 fee = _updatePyth(priceUpdate);
+        _updatePyth(priceUpdate);
         PriceCache memory cache = _newPriceCache(instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
             if (_tryLiquidate(cache, positionIds[i])) ++liquidated;
         }
         emit LiquidationBatchProcessed(positionIds.length, liquidated);
-        _refundExcess(fee);
     }
 
     function harvest(uint256 maxIterations) external returns (uint256 paid) {
@@ -372,6 +367,13 @@ contract Exchange is IExchange, Ownable2Step {
                 toId,
                 maxMerges
             );
+    }
+
+    receive() external payable {}
+
+    function withdrawNative(address to, uint256 amount) external onlyOwner {
+        (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert NativeTransferFailed();
     }
 
     function claimProtocolFees() external onlyOwner {
@@ -508,19 +510,11 @@ contract Exchange is IExchange, Ownable2Step {
         return priceUpdate.length == 0 ? 0 : pyth.getUpdateFee(priceUpdate);
     }
 
-    function _updatePyth(
-        bytes[] calldata priceUpdate
-    ) internal returns (uint256 fee) {
-        if (priceUpdate.length == 0) return 0;
-        fee = pyth.getUpdateFee(priceUpdate);
-        if (msg.value < fee) revert InsufficientUpdateFee();
+    function _updatePyth(bytes[] calldata priceUpdate) internal {
+        if (priceUpdate.length == 0) return;
+        uint256 fee = pyth.getUpdateFee(priceUpdate);
+        if (address(this).balance < fee) revert InsufficientUpdateFee();
         pyth.updatePriceFeeds{value: fee}(priceUpdate);
-    }
-
-    function _refundExcess(uint256 fee) internal {
-        if (msg.value <= fee) return;
-        (bool ok, ) = msg.sender.call{value: msg.value - fee}("");
-        if (!ok) revert RefundFailed();
     }
 
     function _normalizePrice(
@@ -890,14 +884,7 @@ contract Exchange is IExchange, Ownable2Step {
                 _setSideBucket(sideBucket + collateral);
             }
         }
-        emit Liquidated(
-            positionId,
-            trader,
-            price,
-            liqPrice,
-            usedCredits,
-            fee
-        );
+        emit Liquidated(positionId, trader, price, liqPrice, usedCredits, fee);
     }
 
     function _payOrQueue(
