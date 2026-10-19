@@ -216,24 +216,15 @@ contract Exchange is IExchange, Ownable2Step {
         revert UnpauseDisabled();
     }
 
-    function deposit(uint256 amount) external {
-        if (amount == 0) revert ZeroAmount();
-        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 credit = amount * collateralScale;
-        _creditBalance(msg.sender, credit);
-        treasury += credit;
-        emit Deposited(msg.sender, credit);
-    }
-
-    function withdraw(uint256 amount) external {
+    function claim(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         uint256 debit = amount * collateralScale;
-        if (balances[msg.sender] < debit) revert WithdrawalExceedsBalance();
+        if (balances[msg.sender] < debit) revert InsufficientBalance();
         balances[msg.sender] -= debit;
         totalBalances -= uint128(debit);
         treasury -= debit;
         collateralToken.safeTransfer(msg.sender, amount);
-        emit Withdrawn(msg.sender, debit);
+        emit Claimed(msg.sender, debit);
     }
 
     function fundHouse(uint256 amount) external {
@@ -244,31 +235,32 @@ contract Exchange is IExchange, Ownable2Step {
         emit HouseFunded(msg.sender, credit);
     }
 
-    function adminCredit(address user, uint256 amount) external onlyOwner {
-        uint256 credit = amount * collateralScale;
-        if (credit == 0) return;
-        _creditBalance(user, credit);
-        treasury += credit;
-        emit Deposited(user, credit);
-    }
-
     function openPosition(
         uint32 instrumentId,
         bool isLong,
         uint128 collateral,
         uint32 leverage,
+        bool useBalance,
         bool useCredits,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId) {
         uint256 fee = _updatePyth(priceUpdate);
-        positionId = _openPosition(
+        uint256 fromWallet;
+        (positionId, fromWallet) = _openPosition(
             msg.sender,
             instrumentId,
             isLong,
             collateral,
             leverage,
+            useBalance,
             useCredits
         );
+        if (fromWallet != 0)
+            collateralToken.safeTransferFrom(
+                msg.sender,
+                address(this),
+                fromWallet
+            );
         _refundExcess(fee);
     }
 
@@ -574,8 +566,9 @@ contract Exchange is IExchange, Ownable2Step {
         bool isLong,
         uint128 collateral,
         uint32 leverage,
+        bool useBalance,
         bool useCredits
-    ) internal returns (uint256 positionId) {
+    ) internal returns (uint256 positionId, uint256 fromWallet) {
         if (tradingPaused) revert TradingPaused();
         uint64 price = _checkOpenParams(instrumentId, collateral, leverage);
         _increaseOi(
@@ -587,7 +580,7 @@ contract Exchange is IExchange, Ownable2Step {
                 price
             )
         );
-        _lockMargin(trader, collateral, useCredits);
+        fromWallet = _lockMargin(trader, collateral, useBalance, useCredits);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
 
         positionId = nextPositionId++;
@@ -655,19 +648,33 @@ contract Exchange is IExchange, Ownable2Step {
     function _lockMargin(
         address trader,
         uint128 collateral,
+        bool useBalance,
         bool useCredits
-    ) internal {
+    ) internal returns (uint256 fromWallet) {
         if (useCredits) {
             if (collateral > debtQueue.userQueuedTotal[trader])
                 revert InsufficientDebtBalance();
             QueueLib.consume(debtQueue, trader, collateral);
-        } else {
-            uint256 balance = balances[trader];
-            if (balance < collateral) revert InsufficientBalance();
-            balances[trader] = balance - collateral;
-            totalBalances -= collateral;
-            totalLockedMargin += collateral;
+            return 0;
         }
+        uint256 fromBalance;
+        if (useBalance) {
+            uint256 balance = balances[trader];
+            fromBalance = balance < collateral ? balance : collateral;
+            fromBalance -= fromBalance % collateralScale;
+            if (fromBalance != 0) {
+                balances[trader] = balance - fromBalance;
+                totalBalances -= uint128(fromBalance);
+            }
+        }
+        uint256 remaining = uint256(collateral) - fromBalance;
+        if (remaining != 0) {
+            fromWallet = remaining / collateralScale;
+            if (fromWallet * collateralScale != remaining)
+                revert CollateralPrecision();
+            treasury += remaining;
+        }
+        totalLockedMargin += collateral;
     }
 
     function _closePositions(

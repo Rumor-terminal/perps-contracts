@@ -69,7 +69,7 @@ interface IExchange {
     error EmptyCloseList();
     error TooManyPositions();
     error QueueEmpty();
-    error WithdrawalExceedsBalance();
+    error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();
     error RefundFailed();
@@ -146,8 +146,7 @@ interface IExchange {
     );
     event LiquidationBatchProcessed(uint256 requested, uint256 liquidated);
     event SideBucketUpdated(uint256 sideBucket);
-    event Deposited(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
+    event Claimed(address indexed user, uint256 amount);
     event HouseFunded(address indexed from, uint256 amount);
     event ProtocolFeesClaimed(
         address indexed recipient,
@@ -155,9 +154,7 @@ interface IExchange {
         uint256 paid
     );
 
-    function deposit(uint256 amount) external;
-
-    function withdraw(uint256 amount) external;
+    function claim(uint256 amount) external;
 
     function fundHouse(uint256 amount) external;
 
@@ -166,6 +163,7 @@ interface IExchange {
         bool isLong,
         uint128 collateral,
         uint32 leverage,
+        bool useBalance,
         bool useCredits,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId);
@@ -326,6 +324,4 @@ interface IExchange {
     ) external payable;
 
     function unpauseMarket(uint32) external pure;
-
-    function adminCredit(address user, uint256 amount) external;
 }
