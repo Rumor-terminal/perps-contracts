@@ -47,13 +47,14 @@ library InstrumentLib {
     int32 internal constant PRICE_EXPO = -8;
 
     function init(Instrument storage self, Config calldata config, uint64 sizeScale) internal {
-        if (
-            config.maxLeverage == 0 || config.liquidationBuffer >= WAD || config.profitHaircut >= WAD
-                || config.impactA == 0 || config.impactC == 0 || config.maxNotional == 0 || config.priceId == bytes32(0)
-        ) revert InvalidInstrumentConfig();
+        if (config.priceId == bytes32(0) || config.liquidationBuffer >= WAD) revert InvalidInstrumentConfig();
         if (sizeScale == 0) revert InvalidSizeScale();
 
-        self.config = config;
+        self.config.priceId = config.priceId;
+        self.config.liquidationBuffer = config.liquidationBuffer;
+        setRiskParams(self, config.maxLeverage, config.maxNotional);
+        setImpactConfig(self, config.impactC, config.impactB, config.impactA, config.profitHaircut);
+
         self.oi.sizeScale = sizeScale;
         self.oi.longCap = type(uint96).max;
         self.oi.shortCap = type(uint96).max;

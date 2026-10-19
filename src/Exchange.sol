@@ -20,11 +20,6 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     using PositionLib for Position;
     using InstrumentLib for Instrument;
 
-    struct PriceCache {
-        uint256[] prices;
-        bool[] loaded;
-    }
-
     struct CloseTotals {
         uint256 marginReturned;
         uint256 losses;
@@ -121,7 +116,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         uint256 count = positionIds.length;
         if (count == 0) revert EmptyCloseList();
 
-        PriceCache memory cache = _newPriceCache(instrumentCount);
+        uint256[] memory prices = new uint256[](instrumentCount);
         CloseTotals memory totals;
         bool closedAny;
         for (uint256 i; i < count; ++i) {
@@ -129,7 +124,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
             Position memory p = positions[positionId];
             if (!p.isOpen || p.owner != msg.sender) continue;
             closedAny = true;
-            _closePosition(positionId, p, cache, totals);
+            _closePosition(positionId, p, prices, totals);
         }
         if (!closedAny) return;
 
@@ -155,9 +150,9 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         withPriceUpdate(priceUpdate)
         returns (uint256 liquidated)
     {
-        PriceCache memory cache = _newPriceCache(instrumentCount);
+        uint256[] memory prices = new uint256[](instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
-            if (_tryLiquidate(cache, positionIds[i])) ++liquidated;
+            if (_tryLiquidate(prices, positionIds[i])) ++liquidated;
         }
 
         emit LiquidationBatchProcessed(positionIds.length, liquidated);
@@ -281,11 +276,11 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         if (tokens != 0) collateralToken.safeTransfer(user, tokens);
     }
 
-    function _closePosition(uint256 positionId, Position memory p, PriceCache memory cache, CloseTotals memory totals)
+    function _closePosition(uint256 positionId, Position memory p, uint256[] memory prices, CloseTotals memory totals)
         internal
     {
         Instrument storage instrument = instruments[p.instrumentId];
-        uint256 price = _cachedPrice(cache, p.instrumentId, instrument);
+        uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
         _release(positionId, p);
 
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
@@ -320,12 +315,12 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         totals.fees += fee;
     }
 
-    function _tryLiquidate(PriceCache memory cache, uint256 positionId) internal returns (bool) {
+    function _tryLiquidate(uint256[] memory prices, uint256 positionId) internal returns (bool) {
         Position memory p = positions[positionId];
         if (!p.isOpen) return false;
 
         Instrument storage instrument = instruments[p.instrumentId];
-        uint256 price = _cachedPrice(cache, p.instrumentId, instrument);
+        uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
         (bool liquidatable, uint256 liqPrice) = p.isLiquidatable(price, instrument.config.liquidationBuffer);
         if (!liquidatable) return false;
 
@@ -347,23 +342,12 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         userOpenPositionIds[p.owner].remove(positionId);
     }
 
-    function _newPriceCache(uint256 length) internal pure returns (PriceCache memory) {
-        return PriceCache(new uint256[](length), new bool[](length));
-    }
-
-    function _cachedPrice(PriceCache memory cache, uint32 instrumentId, Instrument storage instrument)
+    function _cachedPrice(uint256[] memory prices, uint32 instrumentId, Instrument storage instrument)
         internal
         view
         returns (uint256)
     {
-        if (instrumentId >= cache.loaded.length || instrumentId >= cache.prices.length) {
-            return instrument.price(pyth, maxPriceAge);
-        }
-
-        if (!cache.loaded[instrumentId]) {
-            cache.prices[instrumentId] = instrument.price(pyth, maxPriceAge);
-            cache.loaded[instrumentId] = true;
-        }
-        return cache.prices[instrumentId];
+        if (prices[instrumentId] == 0) prices[instrumentId] = instrument.price(pyth, maxPriceAge);
+        return prices[instrumentId];
     }
 }
