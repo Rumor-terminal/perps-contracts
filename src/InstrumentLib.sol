@@ -14,6 +14,8 @@ library InstrumentLib {
     error LeverageTooLow();
     error LeverageTooHigh();
     error PositionTooLarge();
+    error TradeBelowMinimum();
+    error NotionalBelowMinimum();
     error OiCapExceeded();
     error InvalidPrice();
 
@@ -114,17 +116,21 @@ library InstrumentLib {
     function checkOpen(
         Instrument storage self,
         uint256 collateral,
-        uint256 leverage
-    ) internal view returns (uint256 notional) {
+        uint256 leverage,
+        uint256 minCollateral,
+        uint256 minNotional
+    ) internal view {
         requireExists(self);
         if (leverage == 0) revert LeverageTooLow();
         if (leverage > self.config.maxLeverage) {
             revert LeverageTooHigh();
         }
-        notional = collateral * leverage;
+        uint256 notional = collateral * leverage;
         if (notional > self.config.maxNotional) {
             revert PositionTooLarge();
         }
+        if (collateral < minCollateral) revert TradeBelowMinimum();
+        if (notional < minNotional) revert NotionalBelowMinimum();
     }
 
     function increaseOi(

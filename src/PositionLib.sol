@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {QueueLib} from "./QueueLib.sol";
 import {InstrumentLib} from "./InstrumentLib.sol";
 
 struct Position {
@@ -12,7 +11,6 @@ struct Position {
     uint32 leverage;
     uint64 openedAt;
     bool isLong;
-    bool usedCredits;
     bool isOpen;
 }
 
@@ -48,16 +46,56 @@ library PositionLib {
         view
         returns (int256 rawPnl, int256 netPnl)
     {
-        return QueueLib.computePositionPnl(
-            p.entryPrice,
-            markPrice,
-            p.collateral,
-            p.leverage,
-            p.isLong,
-            inst.profitHaircut,
-            inst.impactA,
-            inst.impactB,
-            inst.impactC
-        );
+        uint256 entryPrice = p.entryPrice;
+        uint256 exitPrice = _exitPrice(entryPrice, markPrice, p.isLong);
+        int256 priceDelta =
+            p.isLong ? int256(exitPrice) - int256(entryPrice) : int256(entryPrice) - int256(exitPrice);
+        rawPnl = int256(uint256(p.collateral)) * int256(uint256(p.leverage)) * priceDelta / int256(entryPrice);
+        if (rawPnl > 0) {
+            netPnl = applyImpact(rawPnl, entryPrice, exitPrice, inst.profitHaircut, inst.impactA, inst.impactB, inst.impactC);
+        } else {
+            int256 maxLoss = -int256(uint256(p.collateral));
+            netPnl = rawPnl < maxLoss ? maxLoss : rawPnl;
+        }
+    }
+
+    function applyImpact(
+        int256 profit,
+        uint256 entryPrice,
+        uint256 exitPrice,
+        uint256 profitHaircut,
+        uint256 impactA,
+        uint256 impactB,
+        uint256 impactC
+    ) internal pure returns (int256) {
+        uint256 move = exitPrice >= entryPrice ? exitPrice - entryPrice : entryPrice - exitPrice;
+        if (move == 0) return 0;
+        uint256 denominator = _impactDenominator(move * WAD / entryPrice, impactA, impactB, impactC);
+        if (denominator == 0) return 0;
+        uint256 factor = (WAD - profitHaircut) * WAD / denominator;
+        return profit * int256(factor) / int256(WAD);
+    }
+
+    function _exitPrice(uint256 entryPrice, uint256 markPrice, bool isLong) private pure returns (uint256) {
+        uint256 tolerance = entryPrice / 50_000;
+        if (isLong) {
+            if (markPrice > entryPrice + tolerance) return markPrice - tolerance;
+            return markPrice > entryPrice ? entryPrice : markPrice;
+        }
+        if (markPrice + tolerance < entryPrice) return markPrice + tolerance;
+        return markPrice < entryPrice ? entryPrice : markPrice;
+    }
+
+    function _impactDenominator(uint256 moveWad, uint256 impactA, uint256 impactB, uint256 impactC)
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 a = moveWad * impactA / WAD;
+        uint256 inverseA = a == 0 ? type(uint256).max : 1e36 / a;
+        uint256 b = 1e6 * moveWad * impactB / WAD;
+        uint256 inverseB = b == 0 ? type(uint256).max : impactC * WAD / b;
+        if (inverseA > 1e36 || inverseB > 1e36) return 0;
+        return WAD + inverseA + inverseB;
     }
 }
