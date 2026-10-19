@@ -62,7 +62,6 @@ interface IExchange {
     error SizeOverflow();
     error OiCapExceeded();
     error InsufficientBalance();
-    error InsufficientDebtBalance();
     error PositionNotOpen();
     error NotPositionOwner();
     error NotLiquidatable();
@@ -163,8 +162,6 @@ interface IExchange {
         bool isLong,
         uint128 collateral,
         uint32 leverage,
-        bool useBalance,
-        bool useCredits,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId);
 

@@ -240,8 +240,6 @@ contract Exchange is IExchange, Ownable2Step {
         bool isLong,
         uint128 collateral,
         uint32 leverage,
-        bool useBalance,
-        bool useCredits,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId) {
         uint256 fee = _updatePyth(priceUpdate);
@@ -251,9 +249,7 @@ contract Exchange is IExchange, Ownable2Step {
             instrumentId,
             isLong,
             collateral,
-            leverage,
-            useBalance,
-            useCredits
+            leverage
         );
         if (fromWallet != 0)
             collateralToken.safeTransferFrom(
@@ -565,9 +561,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint32 instrumentId,
         bool isLong,
         uint128 collateral,
-        uint32 leverage,
-        bool useBalance,
-        bool useCredits
+        uint32 leverage
     ) internal returns (uint256 positionId, uint256 fromWallet) {
         if (tradingPaused) revert TradingPaused();
         uint64 price = _checkOpenParams(instrumentId, collateral, leverage);
@@ -580,7 +574,8 @@ contract Exchange is IExchange, Ownable2Step {
                 price
             )
         );
-        fromWallet = _lockMargin(trader, collateral, useBalance, useCredits);
+        bool useCredits;
+        (fromWallet, useCredits) = _lockMargin(trader, collateral);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
 
         positionId = nextPositionId++;
@@ -647,25 +642,18 @@ contract Exchange is IExchange, Ownable2Step {
 
     function _lockMargin(
         address trader,
-        uint128 collateral,
-        bool useBalance,
-        bool useCredits
-    ) internal returns (uint256 fromWallet) {
-        if (useCredits) {
-            if (collateral > debtQueue.userQueuedTotal[trader])
-                revert InsufficientDebtBalance();
+        uint128 collateral
+    ) internal returns (uint256 fromWallet, bool usedCredits) {
+        if (debtQueue.userQueuedTotal[trader] >= collateral) {
             QueueLib.consume(debtQueue, trader, collateral);
-            return 0;
+            return (0, true);
         }
-        uint256 fromBalance;
-        if (useBalance) {
-            uint256 balance = balances[trader];
-            fromBalance = balance < collateral ? balance : collateral;
-            fromBalance -= fromBalance % collateralScale;
-            if (fromBalance != 0) {
-                balances[trader] = balance - fromBalance;
-                totalBalances -= uint128(fromBalance);
-            }
+        uint256 balance = balances[trader];
+        uint256 fromBalance = balance < collateral ? balance : collateral;
+        fromBalance -= fromBalance % collateralScale;
+        if (fromBalance != 0) {
+            balances[trader] = balance - fromBalance;
+            totalBalances -= uint128(fromBalance);
         }
         uint256 remaining = uint256(collateral) - fromBalance;
         if (remaining != 0) {
