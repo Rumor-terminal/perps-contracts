@@ -23,6 +23,14 @@ library PositionLib {
         Position storage p,
         uint64 sizeScale
     ) internal view returns (uint96) {
+        Position memory m = p;
+        return sizeOf(m, sizeScale);
+    }
+
+    function sizeOf(
+        Position memory p,
+        uint64 sizeScale
+    ) internal pure returns (uint96) {
         if (sizeScale == 0) revert IExchange.InvalidSizeScale();
         uint256 value = (uint256(p.collateral) * p.leverage * sizeScale) /
             p.entryPrice;
@@ -34,6 +42,14 @@ library PositionLib {
         Position storage p,
         uint64 buffer
     ) internal view returns (uint64) {
+        Position memory m = p;
+        return liquidationPriceOf(m, buffer);
+    }
+
+    function liquidationPriceOf(
+        Position memory p,
+        uint64 buffer
+    ) internal pure returns (uint64) {
         uint256 entry = p.entryPrice;
         uint256 step = entry / p.leverage;
         if (p.isLong) {
@@ -49,12 +65,30 @@ library PositionLib {
         uint64 price,
         uint64 buffer
     ) internal view returns (bool liquidatable, uint64 liqPrice) {
-        liqPrice = liquidationPrice(p, buffer);
+        Position memory m = p;
+        return isLiquidatableOf(m, price, buffer);
+    }
+
+    function isLiquidatableOf(
+        Position memory p,
+        uint64 price,
+        uint64 buffer
+    ) internal pure returns (bool liquidatable, uint64 liqPrice) {
+        liqPrice = liquidationPriceOf(p, buffer);
         liquidatable = p.isLong ? price <= liqPrice : price >= liqPrice;
     }
 
     function pnl(
         Position storage p,
+        uint64 markPrice,
+        IExchange.Instrument storage inst
+    ) internal view returns (int256 rawPnl, int256 netPnl) {
+        Position memory m = p;
+        return pnlOf(m, markPrice, inst);
+    }
+
+    function pnlOf(
+        Position memory p,
         uint64 markPrice,
         IExchange.Instrument storage inst
     ) internal view returns (int256 rawPnl, int256 netPnl) {

@@ -542,18 +542,20 @@ contract Exchange is IExchange, Ownable2Step {
         (fromWallet, useCredits) = _lockMargin(trader, collateral);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
 
+        PositionLib.Position memory p = PositionLib.Position({
+            owner: trader,
+            instrumentId: instrumentId,
+            entryPrice: price,
+            collateral: collateral,
+            leverage: leverage,
+            openedAt: uint64(block.timestamp),
+            isLong: isLong,
+            usedCredits: useCredits,
+            isOpen: true
+        });
+        _increaseOi(instrumentId, isLong, p.sizeOf(marketOi[instrumentId].sizeScale));
         positionId = nextPositionId++;
-        PositionLib.Position storage p = positions[positionId];
-        p.owner = trader;
-        p.instrumentId = instrumentId;
-        p.entryPrice = price;
-        p.collateral = collateral;
-        p.leverage = leverage;
-        p.openedAt = uint64(block.timestamp);
-        p.isLong = isLong;
-        p.usedCredits = useCredits;
-        p.isOpen = true;
-        _increaseOi(instrumentId, isLong, p.size(marketOi[instrumentId].sizeScale));
+        positions[positionId] = p;
         uint256[] storage ids = userOpenPositionIds[trader];
         ids.push(positionId);
         positionIndex[positionId] = ids.length;
