@@ -89,14 +89,14 @@ contract Exchange is IExchange, Ownable2Step {
         uint32 leverage,
         bytes[] calldata priceUpdate
     ) external payable returns (uint256 positionId) {
-        _updatePyth(priceUpdate);
         uint256 fromWallet;
         (positionId, fromWallet) = _openPosition(
             msg.sender,
             instrumentId,
             isLong,
             collateral,
-            leverage
+            leverage,
+            priceUpdate
         );
         if (fromWallet != 0)
             collateralToken.safeTransferFrom(
@@ -110,8 +110,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint256[] calldata positionIds,
         bytes[] calldata priceUpdate
     ) external payable {
-        _updatePyth(priceUpdate);
-        _closePositions(msg.sender, positionIds);
+        _closePositions(msg.sender, positionIds, priceUpdate);
     }
 
     function claim(uint256 amount) external {
@@ -551,9 +550,11 @@ contract Exchange is IExchange, Ownable2Step {
         uint32 instrumentId,
         bool isLong,
         uint128 collateral,
-        uint32 leverage
+        uint32 leverage,
+        bytes[] calldata priceUpdate
     ) internal returns (uint256 positionId, uint256 fromWallet) {
         if (tradingPaused) revert TradingPaused();
+        _updatePyth(priceUpdate);
         uint64 price = _checkOpenParams(instrumentId, collateral, leverage);
         _increaseOi(
             instrumentId,
@@ -656,8 +657,10 @@ contract Exchange is IExchange, Ownable2Step {
 
     function _closePositions(
         address trader,
-        uint256[] calldata positionIds
+        uint256[] calldata positionIds,
+        bytes[] calldata priceUpdate
     ) internal {
+        _updatePyth(priceUpdate);
         uint256 count = positionIds.length;
         if (count == 0) revert EmptyCloseList();
         if (count > maxBatchClose) revert TooManyPositions();
