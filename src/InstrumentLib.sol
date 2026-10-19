@@ -8,8 +8,6 @@ library InstrumentLib {
     error InvalidInstrumentConfig();
     error InvalidSizeScale();
     error InvalidInstrumentId();
-    error MarketIsPaused();
-    error MarketAlreadyPaused();
     error LeverageTooLow();
     error LeverageTooHigh();
     error PositionTooLarge();
@@ -38,23 +36,24 @@ library InstrumentLib {
         uint128 shortCap;
     }
 
-    struct Pause {
-        bool paused;
-        uint64 bid;
-        uint64 ask;
-        uint64 pausedAt;
-    }
-
     struct Instrument {
         Config config;
         Oi oi;
-        Pause pause;
     }
 
-    function init(Instrument storage self, Config calldata config, uint64 sizeScale) internal {
+    function init(
+        Instrument storage self,
+        Config calldata config,
+        uint64 sizeScale
+    ) internal {
         if (
-            config.maxLeverage == 0 || config.liquidationBuffer >= WAD || config.profitHaircut >= WAD
-                || config.impactA == 0 || config.impactC == 0 || config.maxNotional == 0 || config.priceId == bytes32(0)
+            config.maxLeverage == 0 ||
+            config.liquidationBuffer >= WAD ||
+            config.profitHaircut >= WAD ||
+            config.impactA == 0 ||
+            config.impactC == 0 ||
+            config.maxNotional == 0 ||
+            config.priceId == bytes32(0)
         ) revert InvalidInstrumentConfig();
         if (sizeScale == 0) revert InvalidSizeScale();
         self.config = config;
@@ -69,9 +68,17 @@ library InstrumentLib {
         }
     }
 
-    function setRisk(Instrument storage self, uint32 maxLeverage, uint256 maxNotional) internal {
+    function setRisk(
+        Instrument storage self,
+        uint32 maxLeverage,
+        uint256 maxNotional
+    ) internal {
         requireExists(self);
-        if (maxLeverage == 0 || maxNotional == 0 || maxNotional > type(uint120).max) {
+        if (
+            maxLeverage == 0 ||
+            maxNotional == 0 ||
+            maxNotional > type(uint120).max
+        ) {
             revert InvalidInstrumentConfig();
         }
         self.config.maxLeverage = maxLeverage;
@@ -95,29 +102,22 @@ library InstrumentLib {
         self.config.profitHaircut = profitHaircut;
     }
 
-    function setOiCaps(Instrument storage self, uint128 longCap, uint128 shortCap) internal {
+    function setOiCaps(
+        Instrument storage self,
+        uint128 longCap,
+        uint128 shortCap
+    ) internal {
         requireExists(self);
         self.oi.longCap = longCap;
         self.oi.shortCap = shortCap;
     }
 
-    function pauseMarket(Instrument storage self, IPyth pyth, uint256 maxPriceAge)
-        internal
-        returns (uint64 bid, uint64 ask)
-    {
+    function checkOpen(
+        Instrument storage self,
+        uint128 collateral,
+        uint32 leverage
+    ) internal view returns (uint256 notional) {
         requireExists(self);
-        if (self.pause.paused) revert MarketAlreadyPaused();
-        (bid, ask) = bidAsk(self, pyth, maxPriceAge);
-        self.pause = Pause(true, bid, ask, uint64(block.timestamp));
-    }
-
-    function checkOpen(Instrument storage self, uint128 collateral, uint32 leverage)
-        internal
-        view
-        returns (uint256 notional)
-    {
-        requireExists(self);
-        if (self.pause.paused) revert MarketIsPaused();
         if (leverage == 0) revert LeverageTooLow();
         if (leverage > self.config.maxLeverage) {
             revert LeverageTooHigh();
@@ -128,7 +128,11 @@ library InstrumentLib {
         }
     }
 
-    function increaseOi(Instrument storage self, bool isLong, uint96 size) internal {
+    function increaseOi(
+        Instrument storage self,
+        bool isLong,
+        uint96 size
+    ) internal {
         Oi storage oi = self.oi;
         if (isLong) {
             uint96 newLong = oi.longSize + size;
@@ -141,31 +145,31 @@ library InstrumentLib {
         }
     }
 
-    function decreaseOi(Instrument storage self, bool isLong, uint96 size) internal {
+    function decreaseOi(
+        Instrument storage self,
+        bool isLong,
+        uint96 size
+    ) internal {
         if (isLong) self.oi.longSize -= size;
         else self.oi.shortSize -= size;
     }
 
-    function price(Instrument storage self, IPyth pyth, uint256 maxPriceAge) internal view returns (uint64) {
-        Pause storage mp = self.pause;
-        if (mp.paused) return uint64((uint256(mp.bid) + mp.ask) >> 1);
-        PythStructs.Price memory p = pyth.getPriceNoOlderThan(self.config.priceId, maxPriceAge);
+    function price(
+        Instrument storage self,
+        IPyth pyth,
+        uint256 maxPriceAge
+    ) internal view returns (uint64) {
+        PythStructs.Price memory p = pyth.getPriceNoOlderThan(
+            self.config.priceId,
+            maxPriceAge
+        );
         return normalizePrice(p.price, p.expo);
     }
 
-    function bidAsk(Instrument storage self, IPyth pyth, uint256 maxPriceAge)
-        internal
-        view
-        returns (uint64 bid, uint64 ask)
-    {
-        PythStructs.Price memory p = pyth.getPriceNoOlderThan(self.config.priceId, maxPriceAge);
-        uint64 mid = normalizePrice(p.price, p.expo);
-        uint64 conf = uint64(p.conf) > 0 ? normalizePrice(int64(p.conf), p.expo) : 0;
-        bid = conf < mid ? mid - conf : 0;
-        ask = mid + conf;
-    }
-
-    function normalizePrice(int64 rawPrice, int32 expo) internal pure returns (uint64) {
+    function normalizePrice(
+        int64 rawPrice,
+        int32 expo
+    ) internal pure returns (uint64) {
         if (rawPrice <= 0) revert InvalidPrice();
         uint256 value = uint256(uint64(rawPrice));
         if (expo < PRICE_EXPO) {

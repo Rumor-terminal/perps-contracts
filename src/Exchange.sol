@@ -100,6 +100,7 @@ contract Exchange is IExchange, Ownable2Step {
     }
 
     function liquidate(uint256 positionId, bytes[] calldata priceUpdate) external payable {
+        _requireTradingActive();
         _updatePyth(priceUpdate);
         Position memory p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
@@ -113,6 +114,7 @@ contract Exchange is IExchange, Ownable2Step {
         payable
         returns (uint256 liquidated)
     {
+        _requireTradingActive();
         _updatePyth(priceUpdate);
         PriceCache memory cache = _newPriceCache(instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
@@ -299,16 +301,6 @@ contract Exchange is IExchange, Ownable2Step {
         emit MarketOiCapsUpdated(instrumentId, longCap, shortCap);
     }
 
-    function pauseMarket(uint32 instrumentId, bytes[] calldata priceUpdate) external payable onlyOwner {
-        _updatePyth(priceUpdate);
-        (uint64 bid, uint64 ask) = instruments[instrumentId].pauseMarket(pyth, maxPriceAge);
-        emit MarketPaused(instrumentId, bid, ask, uint64(block.timestamp));
-    }
-
-    function unpauseMarket(uint32) external pure {
-        revert UnpauseDisabled();
-    }
-
     receive() external payable {}
 
     function withdrawNative(address to, uint256 amount) external onlyOwner {
@@ -322,6 +314,10 @@ contract Exchange is IExchange, Ownable2Step {
         protocolFeeAccumulator = 0;
         uint256 paid = _payOrQueue(msg.sender, amount);
         emit ProtocolFeesClaimed(msg.sender, amount, paid);
+    }
+
+    function _requireTradingActive() internal view {
+        if (tradingPaused) revert TradingPaused();
     }
 
     function _updatePyth(bytes[] calldata priceUpdate) internal {
@@ -339,7 +335,7 @@ contract Exchange is IExchange, Ownable2Step {
         uint32 leverage,
         bytes[] calldata priceUpdate
     ) internal returns (uint256 positionId, uint256 fromWallet) {
-        if (tradingPaused) revert TradingPaused();
+        _requireTradingActive();
         _updatePyth(priceUpdate);
         InstrumentLib.Instrument storage inst = instruments[instrumentId];
         uint64 price = _checkOpenParams(inst, collateral, leverage);
@@ -402,6 +398,7 @@ contract Exchange is IExchange, Ownable2Step {
     }
 
     function _closePositions(address trader, uint256[] calldata positionIds, bytes[] calldata priceUpdate) internal {
+        _requireTradingActive();
         _updatePyth(priceUpdate);
         uint256 count = positionIds.length;
         if (count == 0) revert EmptyCloseList();

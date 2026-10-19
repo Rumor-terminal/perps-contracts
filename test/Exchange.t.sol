@@ -320,12 +320,31 @@ contract ExchangeTest is Test {
         open(bob, 0, false, 1_000e18, 10);
     }
 
-    function testTradingPause() public {
+    function testTradingPauseBlocksOpenCloseAndLiquidate() public {
+        uint256 id = open(alice, 0, true, 1_000e18, 10);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
         vm.prank(owner);
         ex.setTradingPaused(true);
+
         vm.prank(alice);
         vm.expectRevert(IExchange.TradingPaused.selector);
         ex.openPosition(0, true, 1_000e18, 10, noUpdate);
+        vm.prank(alice);
+        vm.expectRevert(IExchange.TradingPaused.selector);
+        ex.closePositions(ids, noUpdate);
+        setPrice(BTC, ex.liquidationPrice(id));
+        vm.prank(liquidator);
+        vm.expectRevert(IExchange.TradingPaused.selector);
+        ex.liquidate(id, noUpdate);
+        vm.prank(liquidator);
+        vm.expectRevert(IExchange.TradingPaused.selector);
+        ex.liquidateBatch(ids, noUpdate);
+
+        vm.prank(owner);
+        ex.setTradingPaused(false);
+        vm.prank(liquidator);
+        ex.liquidate(id, noUpdate);
     }
 
     function testProfitQueuedWhenHouseEmptyAndCreditsTradeable() public {

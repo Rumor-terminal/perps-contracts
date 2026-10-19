@@ -12,7 +12,6 @@ interface IExchange {
     error UnsupportedCollateralDecimals();
     error FeeTooHigh();
     error TradingPaused();
-    error UnpauseDisabled();
     error TradeBelowMinimum();
     error NotionalBelowMinimum();
     error SizeOverflow();
@@ -38,7 +37,6 @@ interface IExchange {
         uint32 indexed instrumentId, uint128 impactC, uint96 impactB, uint96 impactA, uint64 profitHaircut
     );
     event MarketOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
-    event MarketPaused(uint32 indexed instrumentId, uint64 bid, uint64 ask, uint64 pausedAt);
     event PositionOpened(
         uint256 indexed positionId,
         address indexed trader,
@@ -174,8 +172,4 @@ interface IExchange {
     ) external;
 
     function setMarketOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external;
-
-    function pauseMarket(uint32 instrumentId, bytes[] calldata priceUpdate) external payable;
-
-    function unpauseMarket(uint32) external pure;
 }
