@@ -53,7 +53,7 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     uint256 public immutable collateralScale;
 
     address public pauseGuardian;
-    uint256 public maxPriceAge;
+    uint256 public maxPriceAge = 60;
     mapping(uint32 => Instrument) public instruments;
     uint32 public instrumentCount;
     mapping(address => uint256) public balances;
@@ -65,13 +65,13 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     QueueLib.QueueState internal debtQueue;
     uint128 public totalBalances;
     uint128 public totalLockedMargin;
-    uint256 public lossFeeRate;
-    uint256 public winFeeRate;
-    uint256 public liquidationFeeRate;
+    uint256 public lossFeeRate = 0.02e18;
+    uint256 public winFeeRate = 0.02e18;
+    uint256 public liquidationFeeRate = 0.02e18;
     uint128 public stakerFeeAccumulator;
     uint128 public devFeeAccumulator;
     uint128 public sideBucket;
-    TradeMinimums public tradeMinimums;
+    TradeMinimums public tradeMinimums = TradeMinimums(1e18, 0);
     bool public tradingPaused;
     address public stakerFeeRecipient;
     address public devFeeRecipient;
@@ -104,11 +104,6 @@ contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
         pauseGuardian = owner_;
         devFeeRecipient = owner_;
         stakerFeeRecipient = owner_;
-        lossFeeRate = 0.02e18;
-        winFeeRate = 0.02e18;
-        liquidationFeeRate = 0.02e18;
-        tradeMinimums.minCollateral = 1e18;
-        maxPriceAge = 60;
         debtQueue.nextId = 1;
     }
 
