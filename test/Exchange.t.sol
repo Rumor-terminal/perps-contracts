@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {Exchange} from "../src/Exchange.sol";
+import {IExchange} from "../src/interfaces/IExchange.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 
 contract ExchangeTest is Test {
@@ -41,8 +42,8 @@ contract ExchangeTest is Test {
         vm.deal(liquidator, 1 ether);
     }
 
-    function _instrument(bytes32 priceId) internal pure returns (Exchange.Instrument memory) {
-        return Exchange.Instrument({
+    function _instrument(bytes32 priceId) internal pure returns (IExchange.Instrument memory) {
+        return IExchange.Instrument({
             impactA: 1e21,
             impactB: 1e18,
             priceId: priceId,
@@ -103,7 +104,7 @@ contract ExchangeTest is Test {
         assertEq(usdc.balanceOf(alice), 40_000e6);
         assertEq(ex.treasury(), 1_160_000e18);
         vm.prank(alice);
-        vm.expectRevert(Exchange.WithdrawalExceedsBalance.selector);
+        vm.expectRevert(IExchange.WithdrawalExceedsBalance.selector);
         ex.withdraw(60_001e6);
     }
 
@@ -180,7 +181,7 @@ contract ExchangeTest is Test {
         uint64 liq = ex.liquidationPrice(id);
         setPrice(BTC, liq + 1);
         vm.prank(liquidator);
-        vm.expectRevert(Exchange.NotLiquidatable.selector);
+        vm.expectRevert(IExchange.NotLiquidatable.selector);
         ex.liquidate(id, noUpdate);
 
         setPrice(BTC, liq);
@@ -225,7 +226,7 @@ contract ExchangeTest is Test {
     function testInsufficientUpdateFeeReverts() public {
         bytes[] memory data = updateData(BTC, 90_000 * P8);
         vm.prank(alice);
-        vm.expectRevert(Exchange.InsufficientUpdateFee.selector);
+        vm.expectRevert(IExchange.InsufficientUpdateFee.selector);
         ex.openPosition{value: 0}(0, true, 1_000e18, 10, false, data);
     }
 
@@ -238,19 +239,19 @@ contract ExchangeTest is Test {
 
     function testOpenParamChecks() public {
         vm.startPrank(alice);
-        vm.expectRevert(Exchange.TradeBelowMinimum.selector);
+        vm.expectRevert(IExchange.TradeBelowMinimum.selector);
         ex.openPosition(0, true, 9e18, 10, false, noUpdate);
-        vm.expectRevert(Exchange.NotionalBelowMinimum.selector);
+        vm.expectRevert(IExchange.NotionalBelowMinimum.selector);
         ex.openPosition(0, true, 10e18, 10, false, noUpdate);
-        vm.expectRevert(Exchange.LeverageTooHigh.selector);
+        vm.expectRevert(IExchange.LeverageTooHigh.selector);
         ex.openPosition(0, true, 1_000e18, 1001, false, noUpdate);
-        vm.expectRevert(Exchange.LeverageTooLow.selector);
+        vm.expectRevert(IExchange.LeverageTooLow.selector);
         ex.openPosition(0, true, 1_000e18, 0, false, noUpdate);
-        vm.expectRevert(Exchange.PositionTooLarge.selector);
+        vm.expectRevert(IExchange.PositionTooLarge.selector);
         ex.openPosition(0, true, 10_000e18, 101, false, noUpdate);
-        vm.expectRevert(Exchange.InvalidInstrumentId.selector);
+        vm.expectRevert(IExchange.InvalidInstrumentId.selector);
         ex.openPosition(7, true, 1_000e18, 10, false, noUpdate);
-        vm.expectRevert(Exchange.InsufficientBalance.selector);
+        vm.expectRevert(IExchange.InsufficientBalance.selector);
         ex.openPosition(0, true, 100_001e18, 1, false, noUpdate);
         vm.stopPrank();
     }
@@ -260,7 +261,7 @@ contract ExchangeTest is Test {
         ex.setMarketOiCaps(0, uint128(10_000e18 * 1e8 / (80_000 * P8)), type(uint128).max);
         open(alice, 0, true, 1_000e18, 10);
         vm.prank(bob);
-        vm.expectRevert(Exchange.OiCapExceeded.selector);
+        vm.expectRevert(IExchange.OiCapExceeded.selector);
         ex.openPosition(0, true, 1_000e18, 10, false, noUpdate);
         open(bob, 0, false, 1_000e18, 10);
     }
@@ -269,7 +270,7 @@ contract ExchangeTest is Test {
         vm.prank(owner);
         ex.setTradingPaused(true);
         vm.prank(alice);
-        vm.expectRevert(Exchange.TradingPaused.selector);
+        vm.expectRevert(IExchange.TradingPaused.selector);
         ex.openPosition(0, true, 1_000e18, 10, false, noUpdate);
     }
 
@@ -337,7 +338,7 @@ contract ExchangeTest is Test {
         uint256 staker = ex.stakerFeeAccumulator();
         assertGt(dev, 0);
         vm.prank(alice);
-        vm.expectRevert(Exchange.NotDevFeeRecipient.selector);
+        vm.expectRevert(IExchange.NotDevFeeRecipient.selector);
         ex.claimDevFees();
         vm.startPrank(owner);
         ex.claimDevFees();

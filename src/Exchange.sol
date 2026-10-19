@@ -2,59 +2,26 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {
+    IERC20Metadata
+} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {
+    SafeERC20
+} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {
+    Ownable2Step,
+    Ownable
+} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {QueueLib} from "./QueueLib.sol";
+import {IExchange} from "./interfaces/IExchange.sol";
 
-contract Exchange is Ownable2Step, ReentrancyGuard {
+contract Exchange is IExchange, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
-
-    struct Instrument {
-        uint96 impactA;
-        uint96 impactB;
-        bytes32 priceId;
-        uint32 maxLeverage;
-        uint120 maxNotional;
-        uint64 liquidationBuffer;
-        uint64 profitHaircut;
-        uint128 impactC;
-    }
-
-    struct Position {
-        address owner;
-        uint32 instrumentId;
-        uint64 entryPrice;
-        uint128 collateral;
-        uint32 leverage;
-        uint64 openedAt;
-        bool isLong;
-        bool usedCredits;
-        bool isOpen;
-    }
-
-    struct MarketPause {
-        bool paused;
-        uint64 bid;
-        uint64 ask;
-        uint64 pausedAt;
-    }
-
-    struct MarketOi {
-        uint96 longSize;
-        uint96 shortSize;
-        uint64 sizeScale;
-        uint128 longCap;
-        uint128 shortCap;
-    }
-
-    struct TradeMinimums {
-        uint128 minCollateral;
-        uint128 minNotional;
-    }
 
     struct PriceCache {
         uint64[] prices;
@@ -112,105 +79,23 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
     mapping(uint32 => MarketPause) public marketPause;
     mapping(uint32 => MarketOi) public marketOi;
 
-    error UnsupportedCollateralDecimals();
-    error NotOwnerOrGuardian();
-    error NotMarketKeeper();
-    error NotDevFeeRecipient();
-    error NotStakerFeeRecipient();
-    error FeeTooHigh();
-    error InvalidInstrumentConfig();
-    error InvalidSizeScale();
-    error InvalidInstrumentId();
-    error TradingPaused();
-    error MarketIsPaused();
-    error MarketAlreadyPaused();
-    error UnpauseDisabled();
-    error LeverageTooLow();
-    error LeverageTooHigh();
-    error TradeBelowMinimum();
-    error NotionalBelowMinimum();
-    error PositionTooLarge();
-    error SizeOverflow();
-    error OiCapExceeded();
-    error InsufficientBalance();
-    error InsufficientDebtBalance();
-    error PositionNotOpen();
-    error NotPositionOwner();
-    error NotLiquidatable();
-    error EmptyCloseList();
-    error TooManyPositions();
-    error QueueEmpty();
-    error WithdrawalExceedsBalance();
-    error ZeroAmount();
-    error InsufficientUpdateFee();
-    error RefundFailed();
-    error InvalidPrice();
-
-    event PauseGuardianUpdated(address indexed guardian);
-    event StakerFeeRecipientUpdated(address indexed recipient);
-    event DevFeeRecipientUpdated(address indexed recipient);
-    event MarketKeeperUpdated(address indexed keeper);
-    event TradingPausedUpdated(bool paused);
-    event MaxPriceAgeUpdated(uint256 maxPriceAge);
-    event FeeRatesUpdated(uint256 lossFeeRate, uint256 winFeeRate, uint256 liquidationFeeRate);
-    event TradeMinimumsUpdated(uint128 minCollateral, uint128 minNotional);
-    event InstrumentAdded(uint32 indexed instrumentId, bytes32 priceId, string symbol);
-    event InstrumentRiskUpdated(uint32 indexed instrumentId, uint32 maxLeverage, uint256 maxNotional);
-    event InstrumentImpactConfigUpdated(
-        uint32 indexed instrumentId, uint128 impactC, uint96 impactB, uint96 impactA, uint64 profitHaircut
-    );
-    event MarketOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
-    event MarketPaused(uint32 indexed instrumentId, uint64 bid, uint64 ask, uint64 pausedAt);
-    event PositionOpened(
-        uint256 indexed positionId,
-        address indexed trader,
-        uint32 instrumentId,
-        bool isLong,
-        bool usedCredits,
-        uint64 entryPrice,
-        uint128 collateral,
-        uint32 leverage
-    );
-    event PositionClosed(
-        uint256 indexed positionId,
-        address indexed trader,
-        uint64 exitPrice,
-        int256 rawPnl,
-        int256 pnl,
-        bool usedCredits,
-        uint256 fees
-    );
-    event PositionsClosed(
-        address indexed trader, uint256 credited, uint256 newBalance, uint256 stakerFees, uint256 devFees
-    );
-    event Liquidated(
-        uint256 indexed positionId,
-        address indexed trader,
-        uint64 price,
-        uint64 liquidationPrice,
-        bool usedCredits,
-        uint256 stakerFee,
-        uint256 devFee
-    );
-    event LiquidationBatchProcessed(uint256 requested, uint256 liquidated);
-    event SideBucketUpdated(uint256 sideBucket);
-    event Deposited(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event HouseFunded(address indexed from, uint256 amount);
-    event StakerFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
-    event DevFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
-
     modifier onlyOwnerOrKeeper() {
-        if (msg.sender != owner() && msg.sender != marketKeeper) revert NotMarketKeeper();
+        if (msg.sender != owner() && msg.sender != marketKeeper)
+            revert NotMarketKeeper();
         _;
     }
 
     modifier onlyOwnerOrGuardian() {
-        if (msg.sender != owner() && msg.sender != pauseGuardian) revert NotOwnerOrGuardian();
+        if (msg.sender != owner() && msg.sender != pauseGuardian)
+            revert NotOwnerOrGuardian();
         _;
     }
 
-    constructor(address owner_, address pyth_, address collateral_) Ownable(owner_) {
+    constructor(
+        address owner_,
+        address pyth_,
+        address collateral_
+    ) Ownable(owner_) {
         pyth = IPyth(pyth_);
         collateralToken = IERC20(collateral_);
         uint8 decimals = IERC20Metadata(collateral_).decimals();
@@ -253,16 +138,22 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
     }
 
     function setTradingPaused(bool paused) external {
-        if (msg.sender != owner() && (msg.sender != pauseGuardian || !paused)) revert NotOwnerOrGuardian();
+        if (msg.sender != owner() && (msg.sender != pauseGuardian || !paused))
+            revert NotOwnerOrGuardian();
         tradingPaused = paused;
         emit TradingPausedUpdated(paused);
     }
 
-    function setFeeRates(uint256 lossFeeRate_, uint256 winFeeRate_, uint256 liquidationFeeRate_)
-        external
-        onlyOwner
-    {
-        if (lossFeeRate_ > MAX_FEE_RATE || winFeeRate_ > MAX_FEE_RATE || liquidationFeeRate_ > MAX_FEE_RATE) {
+    function setFeeRates(
+        uint256 lossFeeRate_,
+        uint256 winFeeRate_,
+        uint256 liquidationFeeRate_
+    ) external onlyOwner {
+        if (
+            lossFeeRate_ > MAX_FEE_RATE ||
+            winFeeRate_ > MAX_FEE_RATE ||
+            liquidationFeeRate_ > MAX_FEE_RATE
+        ) {
             revert FeeTooHigh();
         }
         lossFeeRate = lossFeeRate_;
@@ -271,18 +162,22 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         emit FeeRatesUpdated(lossFeeRate_, winFeeRate_, liquidationFeeRate_);
     }
 
-    function setTradeMinimums(uint128 minCollateral, uint128 minNotional) external onlyOwnerOrKeeper {
+    function setTradeMinimums(
+        uint128 minCollateral,
+        uint128 minNotional
+    ) external onlyOwnerOrKeeper {
         tradeMinimums = TradeMinimums(minCollateral, minNotional);
         emit TradeMinimumsUpdated(minCollateral, minNotional);
     }
 
-    function addInstrument(Instrument calldata config, uint64 sizeScale, string calldata symbol)
-        external
-        onlyOwner
-        returns (uint32 instrumentId)
-    {
+    function addInstrument(
+        Instrument calldata config,
+        uint64 sizeScale,
+        string calldata symbol
+    ) external onlyOwner returns (uint32 instrumentId) {
         if (config.maxLeverage == 0) revert InvalidInstrumentConfig();
-        if (config.liquidationBuffer >= PRECISION) revert InvalidInstrumentConfig();
+        if (config.liquidationBuffer >= PRECISION)
+            revert InvalidInstrumentConfig();
         if (config.profitHaircut >= PRECISION) revert InvalidInstrumentConfig();
         if (config.impactA == 0) revert InvalidInstrumentConfig();
         if (config.impactC == 0) revert InvalidInstrumentConfig();
@@ -298,9 +193,17 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         emit InstrumentAdded(instrumentId, config.priceId, symbol);
     }
 
-    function setInstrumentRisk(uint32 instrumentId, uint32 maxLeverage, uint256 maxNotional) external onlyOwner {
+    function setInstrumentRisk(
+        uint32 instrumentId,
+        uint32 maxLeverage,
+        uint256 maxNotional
+    ) external onlyOwner {
         _requireInstrument(instrumentId);
-        if (maxLeverage == 0 || maxNotional == 0 || maxNotional > type(uint120).max) revert InvalidInstrumentConfig();
+        if (
+            maxLeverage == 0 ||
+            maxNotional == 0 ||
+            maxNotional > type(uint120).max
+        ) revert InvalidInstrumentConfig();
         Instrument storage inst = instruments[instrumentId];
         inst.maxLeverage = maxLeverage;
         inst.maxNotional = uint120(maxNotional);
@@ -315,16 +218,27 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         uint64 profitHaircut
     ) external onlyOwner {
         _requireInstrument(instrumentId);
-        if (impactC == 0 || impactA == 0 || profitHaircut >= PRECISION) revert InvalidInstrumentConfig();
+        if (impactC == 0 || impactA == 0 || profitHaircut >= PRECISION)
+            revert InvalidInstrumentConfig();
         Instrument storage inst = instruments[instrumentId];
         inst.impactC = impactC;
         inst.impactB = impactB;
         inst.impactA = impactA;
         inst.profitHaircut = profitHaircut;
-        emit InstrumentImpactConfigUpdated(instrumentId, impactC, impactB, impactA, profitHaircut);
+        emit InstrumentImpactConfigUpdated(
+            instrumentId,
+            impactC,
+            impactB,
+            impactA,
+            profitHaircut
+        );
     }
 
-    function setMarketOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external onlyOwnerOrKeeper {
+    function setMarketOiCaps(
+        uint32 instrumentId,
+        uint128 longCap,
+        uint128 shortCap
+    ) external onlyOwnerOrKeeper {
         _requireInstrument(instrumentId);
         MarketOi storage oi = marketOi[instrumentId];
         oi.longCap = longCap;
@@ -332,12 +246,10 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         emit MarketOiCapsUpdated(instrumentId, longCap, shortCap);
     }
 
-    function pauseMarket(uint32 instrumentId, bytes[] calldata priceUpdate)
-        external
-        payable
-        onlyOwnerOrGuardian
-        nonReentrant
-    {
+    function pauseMarket(
+        uint32 instrumentId,
+        bytes[] calldata priceUpdate
+    ) external payable onlyOwnerOrGuardian nonReentrant {
         _requireInstrument(instrumentId);
         MarketPause storage mp = marketPause[instrumentId];
         if (mp.paused) revert MarketAlreadyPaused();
@@ -399,33 +311,43 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         bytes[] calldata priceUpdate
     ) external payable nonReentrant returns (uint256 positionId) {
         _updatePyth(priceUpdate);
-        positionId = _openPosition(msg.sender, instrumentId, isLong, collateral, leverage, useCredits);
+        positionId = _openPosition(
+            msg.sender,
+            instrumentId,
+            isLong,
+            collateral,
+            leverage,
+            useCredits
+        );
     }
 
-    function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
-        external
-        payable
-        nonReentrant
-    {
+    function closePositions(
+        uint256[] calldata positionIds,
+        bytes[] calldata priceUpdate
+    ) external payable nonReentrant {
         _updatePyth(priceUpdate);
         _closePositions(msg.sender, positionIds);
     }
 
-    function liquidate(uint256 positionId, bytes[] calldata priceUpdate) external payable nonReentrant {
+    function liquidate(
+        uint256 positionId,
+        bytes[] calldata priceUpdate
+    ) external payable nonReentrant {
         _updatePyth(priceUpdate);
         Position storage p = positions[positionId];
         if (!p.isOpen) revert PositionNotOpen();
-        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(p, _newPriceCache(0));
+        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
+            p,
+            _newPriceCache(0)
+        );
         if (!liquidatable) revert NotLiquidatable();
         _executeLiquidation(positionId, p, price, liqPrice);
     }
 
-    function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
-        external
-        payable
-        nonReentrant
-        returns (uint256 liquidated)
-    {
+    function liquidateBatch(
+        uint256[] calldata positionIds,
+        bytes[] calldata priceUpdate
+    ) external payable nonReentrant returns (uint256 liquidated) {
         _updatePyth(priceUpdate);
         PriceCache memory cache = _newPriceCache(instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
@@ -439,39 +361,75 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         uint256 available = queueHarvestAvailable();
         if (available == 0) return 0;
         uint256 newTotalBalances;
-        (paid, newTotalBalances) = QueueLib.harvest(debtQueue, maxIterations, available, balances, totalBalances);
+        (paid, newTotalBalances) = QueueLib.harvest(
+            debtQueue,
+            maxIterations,
+            available,
+            balances,
+            totalBalances
+        );
         totalBalances = uint128(newTotalBalances);
         uint128 bucket = sideBucket;
-        uint128 newBucket = debtQueue.totalQueued != 0 && paid < bucket ? bucket - uint128(paid) : 0;
+        uint128 newBucket = debtQueue.totalQueued != 0 && paid < bucket
+            ? bucket - uint128(paid)
+            : 0;
         if (newBucket != bucket) _setSideBucket(newBucket);
     }
 
-    function compactDebtQueue(address user, uint256 startId, uint256 maxMerges)
-        external
-        returns (uint256 count, uint256 amount, uint256 intoId)
-    {
-        return QueueLib.compactDust(debtQueue, user, startId, maxMerges, PRECISION);
+    function compactDebtQueue(
+        address user,
+        uint256 startId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
+        return
+            QueueLib.compactDust(
+                debtQueue,
+                user,
+                startId,
+                maxMerges,
+                PRECISION
+            );
     }
 
-    function compactDebtQueueRange(address user, uint256 fromId, uint256 intoId, uint256 maxMerges)
-        external
-        returns (uint256 count, uint256 amount, uint256 resultId)
-    {
-        return QueueLib.compactDustRange(debtQueue, user, fromId, intoId, maxMerges, PRECISION);
+    function compactDebtQueueRange(
+        address user,
+        uint256 fromId,
+        uint256 intoId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 resultId) {
+        return
+            QueueLib.compactDustRange(
+                debtQueue,
+                user,
+                fromId,
+                intoId,
+                maxMerges,
+                PRECISION
+            );
     }
 
-    function compactAdjacentDebtQueue(address user, uint256 startId, uint256 maxMerges)
-        external
-        returns (uint256 count, uint256 amount, uint256 intoId)
-    {
+    function compactAdjacentDebtQueue(
+        address user,
+        uint256 startId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
         return QueueLib.compactAdjacent(debtQueue, user, startId, maxMerges);
     }
 
-    function compactAdjacentDebtQueueRange(address user, uint256 fromId, uint256 toId, uint256 maxMerges)
-        external
-        returns (uint256 count, uint256 amount, uint256 intoId)
-    {
-        return QueueLib.compactAdjacentRange(debtQueue, user, fromId, toId, maxMerges);
+    function compactAdjacentDebtQueueRange(
+        address user,
+        uint256 fromId,
+        uint256 toId,
+        uint256 maxMerges
+    ) external returns (uint256 count, uint256 amount, uint256 intoId) {
+        return
+            QueueLib.compactAdjacentRange(
+                debtQueue,
+                user,
+                fromId,
+                toId,
+                maxMerges
+            );
     }
 
     function claimStakerFees() external {
@@ -495,7 +453,10 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
     }
 
     function queueHarvestAvailable() public view returns (uint256) {
-        uint256 liabilities = uint256(totalBalances) + totalLockedMargin + stakerFeeAccumulator + devFeeAccumulator;
+        uint256 liabilities = uint256(totalBalances) +
+            totalLockedMargin +
+            stakerFeeAccumulator +
+            devFeeAccumulator;
         uint256 held = treasury;
         return held > liabilities ? held - liabilities : 0;
     }
@@ -528,7 +489,13 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return debtQueue.userQueueTail[user];
     }
 
-    function queueNode(uint256 id) external view returns (address user, uint48 next, uint48 prev, uint256 amount) {
+    function queueNode(
+        uint256 id
+    )
+        external
+        view
+        returns (address user, uint48 next, uint48 prev, uint256 amount)
+    {
         QueueLib.Node storage n = debtQueue.nodes[id];
         return (n.user, n.next, n.prev, n.amount);
     }
@@ -537,33 +504,67 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return positions[positionId].owner;
     }
 
-    function getUserOpenPositionIds(address user) external view returns (uint256[] memory) {
+    function getUserOpenPositionIds(
+        address user
+    ) external view returns (uint256[] memory) {
         return userOpenPositionIds[user];
     }
 
-    function getMarketOi(uint32 instrumentId)
+    function getMarketOi(
+        uint32 instrumentId
+    )
         external
         view
-        returns (uint96 longSize, uint96 shortSize, uint128 longCap, uint128 shortCap, uint64 sizeScale)
+        returns (
+            uint96 longSize,
+            uint96 shortSize,
+            uint128 longCap,
+            uint128 shortCap,
+            uint64 sizeScale
+        )
     {
         MarketOi storage oi = marketOi[instrumentId];
-        return (oi.longSize, oi.shortSize, oi.longCap, oi.shortCap, oi.sizeScale);
+        return (
+            oi.longSize,
+            oi.shortSize,
+            oi.longCap,
+            oi.shortCap,
+            oi.sizeScale
+        );
     }
 
-    function liquidationPrice(uint256 positionId) external view returns (uint64) {
+    function liquidationPrice(
+        uint256 positionId
+    ) external view returns (uint64) {
         Position storage p = positions[positionId];
-        return _liquidationPrice(p.entryPrice, p.leverage, instruments[p.instrumentId].liquidationBuffer, p.isLong);
+        return
+            _liquidationPrice(
+                p.entryPrice,
+                p.leverage,
+                instruments[p.instrumentId].liquidationBuffer,
+                p.isLong
+            );
     }
 
-    function previewLiquidationPrice(uint32 instrumentId, uint64 entryPrice, uint32 leverage, bool isLong)
-        external
-        view
-        returns (uint64)
-    {
-        return _liquidationPrice(entryPrice, leverage, instruments[instrumentId].liquidationBuffer, isLong);
+    function previewLiquidationPrice(
+        uint32 instrumentId,
+        uint64 entryPrice,
+        uint32 leverage,
+        bool isLong
+    ) external view returns (uint64) {
+        return
+            _liquidationPrice(
+                entryPrice,
+                leverage,
+                instruments[instrumentId].liquidationBuffer,
+                isLong
+            );
     }
 
-    function previewPnl(uint256 positionId, uint64 markPrice) external view returns (int256 rawPnl, int256 pnl) {
+    function previewPnl(
+        uint256 positionId,
+        uint64 markPrice
+    ) external view returns (int256 rawPnl, int256 pnl) {
         return _positionPnl(positions[positionId], markPrice);
     }
 
@@ -572,7 +573,9 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return _price(instrumentId, instruments[instrumentId].priceId);
     }
 
-    function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256) {
+    function pythUpdateFee(
+        bytes[] calldata priceUpdate
+    ) external view returns (uint256) {
         return priceUpdate.length == 0 ? 0 : pyth.getUpdateFee(priceUpdate);
     }
 
@@ -584,12 +587,15 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
             pyth.updatePriceFeeds{value: fee}(priceUpdate);
         }
         if (msg.value > fee) {
-            (bool ok,) = msg.sender.call{value: msg.value - fee}("");
+            (bool ok, ) = msg.sender.call{value: msg.value - fee}("");
             if (!ok) revert RefundFailed();
         }
     }
 
-    function _normalizePrice(int64 price, int32 expo) internal pure returns (uint64) {
+    function _normalizePrice(
+        int64 price,
+        int32 expo
+    ) internal pure returns (uint64) {
         if (price <= 0) revert InvalidPrice();
         uint256 value = uint256(uint64(price));
         if (expo < PRICE_EXPO) {
@@ -601,14 +607,20 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return uint64(value);
     }
 
-    function _pythPrice(bytes32 priceId) internal view returns (PythStructs.Price memory) {
+    function _pythPrice(
+        bytes32 priceId
+    ) internal view returns (PythStructs.Price memory) {
         return pyth.getPriceNoOlderThan(priceId, maxPriceAge);
     }
 
-    function _bidAsk(bytes32 priceId) internal view returns (uint64 bid, uint64 ask) {
+    function _bidAsk(
+        bytes32 priceId
+    ) internal view returns (uint64 bid, uint64 ask) {
         PythStructs.Price memory p = _pythPrice(priceId);
         uint64 mid = _normalizePrice(p.price, p.expo);
-        uint64 conf = uint64(p.conf) > 0 ? _normalizePrice(int64(p.conf), p.expo) : 0;
+        uint64 conf = uint64(p.conf) > 0
+            ? _normalizePrice(int64(p.conf), p.expo)
+            : 0;
         bid = conf < mid ? mid - conf : 0;
         ask = mid + conf;
     }
@@ -624,7 +636,13 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         if (tradingPaused) revert TradingPaused();
         uint64 price = _checkOpenParams(instrumentId, collateral, leverage);
         _increaseOi(
-            instrumentId, isLong, _positionSize(uint256(collateral) * leverage, marketOi[instrumentId].sizeScale, price)
+            instrumentId,
+            isLong,
+            _positionSize(
+                uint256(collateral) * leverage,
+                marketOi[instrumentId].sizeScale,
+                price
+            )
         );
         _lockMargin(trader, collateral, useCredits);
         if (debtQueue.totalQueued == 0 && sideBucket != 0) _setSideBucket(0);
@@ -644,10 +662,23 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         uint256[] storage ids = userOpenPositionIds[trader];
         ids.push(positionId);
         positionIndex[positionId] = ids.length;
-        emit PositionOpened(positionId, trader, instrumentId, isLong, useCredits, price, collateral, leverage);
+        emit PositionOpened(
+            positionId,
+            trader,
+            instrumentId,
+            isLong,
+            useCredits,
+            price,
+            collateral,
+            leverage
+        );
     }
 
-    function _checkOpenParams(uint32 instrumentId, uint128 collateral, uint32 leverage) internal view returns (uint64) {
+    function _checkOpenParams(
+        uint32 instrumentId,
+        uint128 collateral,
+        uint32 leverage
+    ) internal view returns (uint64) {
         _requireInstrument(instrumentId);
         Instrument storage inst = instruments[instrumentId];
         if (marketPause[instrumentId].paused) revert MarketIsPaused();
@@ -661,7 +692,11 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return _price(instrumentId, inst.priceId);
     }
 
-    function _increaseOi(uint32 instrumentId, bool isLong, uint96 size) internal {
+    function _increaseOi(
+        uint32 instrumentId,
+        bool isLong,
+        uint96 size
+    ) internal {
         MarketOi storage oi = marketOi[instrumentId];
         if (isLong) {
             uint96 newLong = oi.longSize + size;
@@ -674,9 +709,14 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         }
     }
 
-    function _lockMargin(address trader, uint128 collateral, bool useCredits) internal {
+    function _lockMargin(
+        address trader,
+        uint128 collateral,
+        bool useCredits
+    ) internal {
         if (useCredits) {
-            if (collateral > debtQueue.userQueuedTotal[trader]) revert InsufficientDebtBalance();
+            if (collateral > debtQueue.userQueuedTotal[trader])
+                revert InsufficientDebtBalance();
             QueueLib.consume(debtQueue, trader, collateral);
         } else {
             uint256 balance = balances[trader];
@@ -687,7 +727,10 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         }
     }
 
-    function _closePositions(address trader, uint256[] calldata positionIds) internal {
+    function _closePositions(
+        address trader,
+        uint256[] calldata positionIds
+    ) internal {
         uint256 count = positionIds.length;
         if (count == 0) revert EmptyCloseList();
         if (count > maxBatchClose) revert TooManyPositions();
@@ -715,41 +758,78 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
     ) internal {
         if (!p.isOpen) revert PositionNotOpen();
         if (p.owner != trader) revert NotPositionOwner();
-        uint64 price = _cachedPrice(cache, p.instrumentId, instruments[p.instrumentId].priceId);
+        uint64 price = _cachedPrice(
+            cache,
+            p.instrumentId,
+            instruments[p.instrumentId].priceId
+        );
         p.isOpen = false;
         if (!p.usedCredits) totals.marginReleased += p.collateral;
         _decreaseOi(
             p.instrumentId,
             p.isLong,
-            _positionSize(uint256(p.collateral) * p.leverage, marketOi[p.instrumentId].sizeScale, p.entryPrice)
+            _positionSize(
+                uint256(p.collateral) * p.leverage,
+                marketOi[p.instrumentId].sizeScale,
+                p.entryPrice
+            )
         );
         (int256 rawPnl, int256 pnl) = _positionPnl(p, price);
         _removeUserPosition(trader, positionId);
-        uint256 fees = _settleClose(trader, p.collateral, pnl, p.usedCredits, totals);
-        emit PositionClosed(positionId, trader, price, rawPnl, pnl, p.usedCredits, fees);
-    }
-
-    function _positionPnl(Position storage p, uint64 price) internal view returns (int256 rawPnl, int256 pnl) {
-        Instrument storage inst = instruments[p.instrumentId];
-        return QueueLib.computePositionPnl(
-            p.entryPrice,
-            price,
+        uint256 fees = _settleClose(
+            trader,
             p.collateral,
-            p.leverage,
-            p.isLong,
-            inst.profitHaircut,
-            inst.impactA,
-            inst.impactB,
-            inst.impactC
+            pnl,
+            p.usedCredits,
+            totals
+        );
+        emit PositionClosed(
+            positionId,
+            trader,
+            price,
+            rawPnl,
+            pnl,
+            p.usedCredits,
+            fees
         );
     }
 
-    function _settleClose(address trader, uint128 collateral, int256 pnl, bool usedCredits, CloseTotals memory totals)
-        internal
-        returns (uint256 fees)
-    {
-        QueueLib.Settlement memory st =
-            QueueLib.settle(debtQueue, trader, collateral, pnl, usedCredits, winFeeRate, lossFeeRate, totals.available);
+    function _positionPnl(
+        Position storage p,
+        uint64 price
+    ) internal view returns (int256 rawPnl, int256 pnl) {
+        Instrument storage inst = instruments[p.instrumentId];
+        return
+            QueueLib.computePositionPnl(
+                p.entryPrice,
+                price,
+                p.collateral,
+                p.leverage,
+                p.isLong,
+                inst.profitHaircut,
+                inst.impactA,
+                inst.impactB,
+                inst.impactC
+            );
+    }
+
+    function _settleClose(
+        address trader,
+        uint128 collateral,
+        int256 pnl,
+        bool usedCredits,
+        CloseTotals memory totals
+    ) internal returns (uint256 fees) {
+        QueueLib.Settlement memory st = QueueLib.settle(
+            debtQueue,
+            trader,
+            collateral,
+            pnl,
+            usedCredits,
+            winFeeRate,
+            lossFeeRate,
+            totals.available
+        );
         totals.marginReturned += st.marginReturned;
         totals.paidNow += st.paidNow;
         totals.sideBucket += st.toSideBucket;
@@ -763,11 +843,18 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         );
 
         if (pnl > 0) {
-            totals.profit += st.marginReturned + st.paidNow + st.queued - collateral + fees;
+            totals.profit +=
+                st.marginReturned +
+                st.paidNow +
+                st.queued -
+                collateral +
+                fees;
         } else if (pnl < 0) {
             uint256 loss = uint256(-pnl);
             if (usedCredits) {
-                totals.creditLosses += (loss < collateral ? loss : collateral) - fees;
+                totals.creditLosses +=
+                    (loss < collateral ? loss : collateral) -
+                    fees;
             } else {
                 totals.losses += loss;
                 totals.lossFees += fees;
@@ -775,48 +862,80 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         }
     }
 
-    function _trackAvailable(CloseTotals memory totals, uint256 inflow, uint256 outflow) internal pure {
+    function _trackAvailable(
+        CloseTotals memory totals,
+        uint256 inflow,
+        uint256 outflow
+    ) internal pure {
         if (inflow >= outflow) {
             totals.available += inflow - outflow;
         } else {
             uint256 drain = outflow - inflow;
-            totals.available = totals.available > drain ? totals.available - drain : 0;
+            totals.available = totals.available > drain
+                ? totals.available - drain
+                : 0;
         }
     }
 
-    function _applyCloseTotals(address trader, CloseTotals memory totals) internal {
-        if (totals.marginReleased != 0) totalLockedMargin -= uint128(totals.marginReleased);
+    function _applyCloseTotals(
+        address trader,
+        CloseTotals memory totals
+    ) internal {
+        if (totals.marginReleased != 0)
+            totalLockedMargin -= uint128(totals.marginReleased);
         uint256 credited = totals.marginReturned + totals.paidNow;
         if (credited != 0) _creditBalance(trader, credited);
         if (totals.stakerFees + totals.devFees != 0) {
             stakerFeeAccumulator += uint128(totals.stakerFees);
             devFeeAccumulator += uint128(totals.devFees);
         }
-        if (totals.sideBucket != 0) _setSideBucket(sideBucket + uint128(totals.sideBucket));
-        emit PositionsClosed(trader, credited, balances[trader], totals.stakerFees, totals.devFees);
+        if (totals.sideBucket != 0)
+            _setSideBucket(sideBucket + uint128(totals.sideBucket));
+        emit PositionsClosed(
+            trader,
+            credited,
+            balances[trader],
+            totals.stakerFees,
+            totals.devFees
+        );
     }
 
-    function _tryLiquidate(PriceCache memory cache, uint256 positionId) internal returns (bool) {
+    function _tryLiquidate(
+        PriceCache memory cache,
+        uint256 positionId
+    ) internal returns (bool) {
         Position storage p = positions[positionId];
         if (!p.isOpen) return false;
-        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(p, cache);
+        (bool liquidatable, uint64 price, uint64 liqPrice) = _checkLiquidatable(
+            p,
+            cache
+        );
         if (!liquidatable) return false;
         _executeLiquidation(positionId, p, price, liqPrice);
         return true;
     }
 
-    function _checkLiquidatable(Position storage p, PriceCache memory cache)
-        internal
-        view
-        returns (bool liquidatable, uint64 price, uint64 liqPrice)
-    {
+    function _checkLiquidatable(
+        Position storage p,
+        PriceCache memory cache
+    ) internal view returns (bool liquidatable, uint64 price, uint64 liqPrice) {
         Instrument storage inst = instruments[p.instrumentId];
         price = _cachedPrice(cache, p.instrumentId, inst.priceId);
-        liqPrice = _liquidationPrice(p.entryPrice, p.leverage, inst.liquidationBuffer, p.isLong);
+        liqPrice = _liquidationPrice(
+            p.entryPrice,
+            p.leverage,
+            inst.liquidationBuffer,
+            p.isLong
+        );
         liquidatable = p.isLong ? price <= liqPrice : price >= liqPrice;
     }
 
-    function _executeLiquidation(uint256 positionId, Position storage p, uint64 price, uint64 liqPrice) internal {
+    function _executeLiquidation(
+        uint256 positionId,
+        Position storage p,
+        uint64 price,
+        uint64 liqPrice
+    ) internal {
         p.isOpen = false;
         address trader = p.owner;
         _removeUserPosition(trader, positionId);
@@ -825,7 +944,11 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         _decreaseOi(
             instrumentId,
             p.isLong,
-            _positionSize(uint256(collateral) * p.leverage, marketOi[instrumentId].sizeScale, p.entryPrice)
+            _positionSize(
+                uint256(collateral) * p.leverage,
+                marketOi[instrumentId].sizeScale,
+                p.entryPrice
+            )
         );
 
         uint256 stakerFee;
@@ -834,7 +957,8 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         if (!usedCredits) {
             totalLockedMargin -= collateral;
             if (debtQueue.totalQueued == 0) {
-                uint256 fee = (uint256(collateral) * liquidationFeeRate) / PRECISION;
+                uint256 fee = (uint256(collateral) * liquidationFeeRate) /
+                    PRECISION;
                 if (fee != 0) {
                     stakerFee = fee >> 1;
                     devFee = fee - stakerFee;
@@ -845,10 +969,21 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
                 _setSideBucket(sideBucket + collateral);
             }
         }
-        emit Liquidated(positionId, trader, price, liqPrice, usedCredits, stakerFee, devFee);
+        emit Liquidated(
+            positionId,
+            trader,
+            price,
+            liqPrice,
+            usedCredits,
+            stakerFee,
+            devFee
+        );
     }
 
-    function _payOrQueue(address user, uint256 amount) internal returns (uint256 paid) {
+    function _payOrQueue(
+        address user,
+        uint256 amount
+    ) internal returns (uint256 paid) {
         uint256 available = lpBankrollAvailable();
         paid = amount < available ? amount : available;
         if (paid != 0) _creditBalance(user, paid);
@@ -869,23 +1004,31 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         if (instrumentId >= instrumentCount) revert InvalidInstrumentId();
     }
 
-    function _price(uint32 instrumentId, bytes32 priceId) internal view returns (uint64) {
+    function _price(
+        uint32 instrumentId,
+        bytes32 priceId
+    ) internal view returns (uint64) {
         MarketPause storage mp = marketPause[instrumentId];
         if (mp.paused) return uint64((uint256(mp.bid) + mp.ask) >> 1);
         PythStructs.Price memory p = _pythPrice(priceId);
         return _normalizePrice(p.price, p.expo);
     }
 
-    function _newPriceCache(uint256 length) internal pure returns (PriceCache memory) {
+    function _newPriceCache(
+        uint256 length
+    ) internal pure returns (PriceCache memory) {
         return PriceCache(new uint64[](length), new bool[](length));
     }
 
-    function _cachedPrice(PriceCache memory cache, uint32 instrumentId, bytes32 priceId)
-        internal
-        view
-        returns (uint64)
-    {
-        if (instrumentId >= cache.loaded.length || instrumentId >= cache.prices.length) {
+    function _cachedPrice(
+        PriceCache memory cache,
+        uint32 instrumentId,
+        bytes32 priceId
+    ) internal view returns (uint64) {
+        if (
+            instrumentId >= cache.loaded.length ||
+            instrumentId >= cache.prices.length
+        ) {
             return _price(instrumentId, priceId);
         }
         if (!cache.loaded[instrumentId]) {
@@ -895,11 +1038,12 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return cache.prices[instrumentId];
     }
 
-    function _liquidationPrice(uint64 entryPrice, uint32 leverage, uint64 buffer, bool isLong)
-        internal
-        pure
-        returns (uint64)
-    {
+    function _liquidationPrice(
+        uint64 entryPrice,
+        uint32 leverage,
+        uint64 buffer,
+        bool isLong
+    ) internal pure returns (uint64) {
         uint256 step = entryPrice / leverage;
         if (isLong) {
             uint256 base = entryPrice - step;
@@ -909,14 +1053,22 @@ contract Exchange is Ownable2Step, ReentrancyGuard {
         return uint64(shortBase - (shortBase * buffer) / PRECISION);
     }
 
-    function _positionSize(uint256 notional, uint64 sizeScale, uint64 price) internal pure returns (uint96) {
+    function _positionSize(
+        uint256 notional,
+        uint64 sizeScale,
+        uint64 price
+    ) internal pure returns (uint96) {
         if (sizeScale == 0) revert InvalidSizeScale();
         uint256 size = (notional * sizeScale) / price;
         if (size > type(uint96).max) revert SizeOverflow();
         return uint96(size);
     }
 
-    function _decreaseOi(uint32 instrumentId, bool isLong, uint96 size) internal {
+    function _decreaseOi(
+        uint32 instrumentId,
+        bool isLong,
+        uint96 size
+    ) internal {
         MarketOi storage oi = marketOi[instrumentId];
         if (isLong) oi.longSize -= size;
         else oi.shortSize -= size;
