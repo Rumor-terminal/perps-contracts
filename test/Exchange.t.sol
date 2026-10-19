@@ -6,7 +6,7 @@ import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {Exchange} from "../src/Exchange.sol";
 import {IExchange} from "../src/interfaces/IExchange.sol";
-import {InstrumentLib} from "../src/InstrumentLib.sol";
+import {Config, InstrumentLib} from "../src/InstrumentLib.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 
 contract ExchangeTest is Test {
@@ -44,8 +44,8 @@ contract ExchangeTest is Test {
         vm.deal(liquidator, 1 ether);
     }
 
-    function _instrument(bytes32 priceId) internal pure returns (InstrumentLib.Config memory) {
-        return InstrumentLib.Config({
+    function _instrument(bytes32 priceId) internal pure returns (Config memory) {
+        return Config({
             impactA: 1e21,
             impactB: 1e18,
             priceId: priceId,
@@ -61,7 +61,14 @@ contract ExchangeTest is Test {
         vm.warp(block.timestamp + 1);
         data = new bytes[](1);
         data[0] = pyth.createPriceFeedUpdateData(
-            id, int64(uint64(price8)), uint64(price8 / 1000), -8, int64(uint64(price8)), uint64(price8 / 1000), uint64(block.timestamp), 0
+            id,
+            int64(uint64(price8)),
+            uint64(price8 / 1000),
+            -8,
+            int64(uint64(price8)),
+            uint64(price8 / 1000),
+            uint64(block.timestamp),
+            0
         );
     }
 
@@ -82,9 +89,12 @@ contract ExchangeTest is Test {
         usdc.approve(address(ex), type(uint256).max);
     }
 
-    function open(address who, uint32 inst, bool isLong, uint128 collateral, uint32 lev) internal returns (uint256) {
+    function open(address who, uint32 instrumentId, bool isLong, uint128 collateral, uint32 lev)
+        internal
+        returns (uint256)
+    {
         vm.prank(who);
-        return ex.openPosition(inst, isLong, collateral, lev, noUpdate);
+        return ex.openPosition(instrumentId, isLong, collateral, lev, noUpdate);
     }
 
     function close(address who, uint256 id) internal {
@@ -96,18 +106,16 @@ contract ExchangeTest is Test {
 
     function testOpenPullsCollateralFromWallet() public {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
-        (address posOwner,, uint64 entry, uint128 coll, uint32 lev,, bool isLong, bool isOpen) = ex.positions(id);
+        (address posOwner,, uint64 entry, uint128 coll,, uint32 lev,, bool isLong, bool isOpen) = ex.positions(id);
         assertEq(posOwner, alice);
         assertEq(entry, 80_000 * P8);
         assertEq(coll, 1_000e18);
         assertEq(lev, 10);
         assertTrue(isLong && isOpen);
         assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
-        assertEq(ex.balances(alice), 0);
-        assertEq(ex.totalBalances(), 0);
         assertEq(ex.totalLockedMargin(), 1_000e18);
         assertEq(usdc.balanceOf(address(ex)), 1_001_000e6);
-        (uint256 longSize,,,,) = ex.getMarketOi(0);
+        uint256 longSize = ex.getMarketOi(0).longSize;
         assertEq(longSize, 10_000e18 * 1e8 / (80_000 * P8));
     }
 
@@ -127,60 +135,17 @@ contract ExchangeTest is Test {
 
         uint256 houseBefore = ex.treasury();
         close(alice, id);
-        (,,,,,,, bool isOpen) = ex.positions(id);
+        (,,,,,,,, bool isOpen) = ex.positions(id);
         assertFalse(isOpen);
         uint256 fee = uint256(pnl) * 0.02e18 / 1e18;
-        assertEq(ex.balances(alice), 1_000e18 + uint256(pnl) - fee);
-        assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
+        uint256 win = uint256(pnl) - fee;
+        assertEq(usdc.balanceOf(alice), WALLET + win / 1e12);
         assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.totalLockedMargin(), 0);
-        assertEq(ex.treasury(), houseBefore - uint256(pnl) + fee);
+        assertEq(ex.treasury(), houseBefore - win + win % 1e12);
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
-        (uint256 longSize,,,,) = ex.getMarketOi(0);
+        uint256 longSize = ex.getMarketOi(0).longSize;
         assertEq(longSize, 0);
-    }
-
-    function testClaimUnclaimedBalance() public {
-        uint256 id = open(alice, 0, true, 1_000e18, 10);
-        setPrice(BTC, 88_000 * P8);
-        close(alice, id);
-        uint256 unclaimed = ex.balances(alice);
-        assertGt(unclaimed, 1_000e18);
-        uint256 heldBefore = usdc.balanceOf(address(ex));
-
-        vm.prank(alice);
-        ex.claim(500e6);
-        assertEq(ex.balances(alice), unclaimed - 500e18);
-        assertEq(usdc.balanceOf(alice), WALLET - 1_000e6 + 500e6);
-        assertEq(usdc.balanceOf(address(ex)), heldBefore - 500e6);
-
-        vm.prank(alice);
-        vm.expectRevert(IExchange.InsufficientBalance.selector);
-        ex.claim(uint256(unclaimed) / 1e12);
-
-        vm.prank(alice);
-        vm.expectRevert(IExchange.ZeroAmount.selector);
-        ex.claim(0);
-    }
-
-    function testUnclaimedBalanceReducesWalletPull() public {
-        uint256 id = open(alice, 0, true, 1_000e18, 10);
-        setPrice(BTC, 88_000 * P8);
-        close(alice, id);
-        uint256 unclaimed = ex.balances(alice);
-        uint256 walletBefore = usdc.balanceOf(alice);
-
-        uint128 collateral = uint128(unclaimed - (unclaimed % 1e12) + 500e18);
-        vm.prank(alice);
-        ex.openPosition(0, true, collateral, 10, noUpdate);
-        assertEq(ex.balances(alice), unclaimed % 1e12);
-        assertEq(usdc.balanceOf(alice), walletBefore - 500e6);
-        assertEq(ex.totalLockedMargin(), collateral);
-
-        vm.prank(alice);
-        ex.openPosition(0, false, 1_000e18, 10, noUpdate);
-        assertEq(ex.balances(alice), unclaimed % 1e12);
-        assertEq(usdc.balanceOf(alice), walletBefore - 500e6 - 1_000e6);
     }
 
     function testOpenShortCloseWithLoss() public {
@@ -190,7 +155,7 @@ contract ExchangeTest is Test {
         assertEq(pnl, -250e18);
         close(alice, id);
         uint256 fee = 250e18 * 0.02e18 / 1e18;
-        assertEq(ex.balances(alice), 750e18);
+        assertEq(usdc.balanceOf(alice), WALLET - 1_000e6 + 750e6);
         assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.treasury(), 1_000_000e18 + 250e18);
     }
@@ -229,9 +194,9 @@ contract ExchangeTest is Test {
         setPrice(BTC, liq);
         vm.prank(liquidator);
         ex.liquidate(id, noUpdate);
-        (,,,,,,, bool isOpen) = ex.positions(id);
+        (,,,,,,,, bool isOpen) = ex.positions(id);
         assertFalse(isOpen);
-        assertEq(ex.balances(alice), 0);
+        assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
         assertEq(ex.totalLockedMargin(), 0);
         uint256 fee = 1_000e18 * 0.02e18 / 1e18;
         assertEq(ex.protocolFeeAccumulator(), fee);
@@ -249,7 +214,7 @@ contract ExchangeTest is Test {
         vm.prank(liquidator);
         uint256 n = ex.liquidateBatch(ids, noUpdate);
         assertEq(n, 1);
-        (,,,,,,, bool bOpen) = ex.positions(b);
+        (,,,,,,,, bool bOpen) = ex.positions(b);
         assertTrue(bOpen);
     }
 
@@ -258,7 +223,7 @@ contract ExchangeTest is Test {
         uint256 balBefore = alice.balance;
         vm.prank(alice);
         uint256 id = ex.openPosition{value: 0.01 ether}(0, true, 1_000e18, 10, data);
-        (,, uint64 entry,,,,,) = ex.positions(id);
+        (,, uint64 entry,,,,,,) = ex.positions(id);
         assertEq(entry, 90_000 * P8);
         assertEq(alice.balance, balBefore - 0.01 ether);
         assertEq(address(ex).balance, 0.01 ether - 1);
@@ -367,11 +332,11 @@ contract ExchangeTest is Test {
 
         assertEq(paid, 1_000_000e18);
         assertGt(queued, 0);
-        assertEq(ex.balances(alice), 40_000e18 + paid);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12);
         assertEq(ex.treasury(), 0);
         assertEq(ex.queueLength(), 1);
-        assertEq(ex.queuedTotal(), queued);
-        assertEq(ex.queuedOf(alice), queued);
+        assertEq(ex.treasuryDebt(), queued);
+        assertEq(ex.treasuryDebtOf(alice), queued);
         assertEq(ex.totalLockedMargin(), 0);
         (address user, uint256 amount) = ex.queue(0);
         assertEq(user, alice);
@@ -391,23 +356,23 @@ contract ExchangeTest is Test {
         assertLt(50_000e18, queued);
 
         assertEq(ex.harvest(10), 0);
-        assertEq(ex.balances(alice), 40_000e18 + paid + 50_000e18);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + 50_000e6);
         assertEq(ex.treasury(), 0);
         assertEq(ex.queueLength(), 1);
         uint256 remaining = queued - 50_000e18;
-        assertEq(ex.queuedTotal(), remaining);
-        assertEq(ex.queuedOf(alice), remaining);
+        assertEq(ex.treasuryDebt(), remaining);
+        assertEq(ex.treasuryDebtOf(alice), remaining);
         (, uint256 amount) = ex.queue(0);
         assertEq(amount, remaining);
 
         fundHouse(remaining / 1e12 + 1e6);
         uint256 treasuryBefore = ex.treasury();
         assertEq(ex.harvest(10), 1);
-        assertEq(ex.balances(alice), 40_000e18 + paid + queued);
-        assertEq(ex.queuedOf(alice), 0);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + 50_000e6 + remaining / 1e12);
+        assertEq(ex.treasuryDebtOf(alice), 0);
         assertEq(ex.queueLength(), 0);
-        assertEq(ex.queuedTotal(), 0);
-        assertEq(ex.treasury(), treasuryBefore - remaining);
+        assertEq(ex.treasuryDebt(), 0);
+        assertEq(ex.treasury(), treasuryBefore - remaining + remaining % 1e12);
     }
 
     function testWinAppendsWhileQueueExistsUntilHarvest() public {
@@ -421,25 +386,25 @@ contract ExchangeTest is Test {
         close(bob, bobId);
         setPrice(BTC, 80_000 * P8);
         uint256 bobProfit = uint256(bobPnl) - uint256(bobPnl) * 0.02e18 / 1e18;
-        assertEq(ex.balances(bob), 1_000e18);
+        assertEq(usdc.balanceOf(bob), WALLET);
         assertEq(ex.queueLength(), 2);
-        assertEq(ex.queuedOf(bob), bobProfit);
-        assertEq(ex.queuedTotal(), queued + bobProfit);
+        assertEq(ex.treasuryDebtOf(bob), bobProfit);
+        assertEq(ex.treasuryDebt(), queued + bobProfit);
 
         fundHouse(2_000_000e6);
         uint256 bobSecond = open(bob, 0, true, 1_000e18, 10);
         setPrice(BTC, 88_000 * P8);
         close(bob, bobSecond);
         assertEq(ex.queueLength(), 3);
-        assertEq(ex.balances(alice), 40_000e18 + paid);
-        assertEq(ex.queuedOf(alice), queued);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12);
+        assertEq(ex.treasuryDebtOf(alice), queued);
 
         assertEq(ex.harvest(10), 3);
         assertEq(ex.queueLength(), 0);
-        assertEq(ex.balances(alice), 40_000e18 + paid + queued);
-        assertEq(ex.queuedOf(alice), 0);
-        assertEq(ex.balances(bob), 1_000e18 + 2 * bobProfit);
-        assertEq(ex.queuedOf(bob), 0);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + queued / 1e12);
+        assertEq(ex.treasuryDebtOf(alice), 0);
+        assertEq(usdc.balanceOf(bob), WALLET + 2 * (bobProfit / 1e12));
+        assertEq(ex.treasuryDebtOf(bob), 0);
     }
 
     function testHarvestStopsAtMaxEntries() public {
@@ -451,10 +416,10 @@ contract ExchangeTest is Test {
         fundHouse(5_000_000e6);
         assertEq(ex.harvest(1), 1);
         assertEq(ex.queueLength(), 1);
-        assertEq(ex.queuedOf(alice), 0);
+        assertEq(ex.treasuryDebtOf(alice), 0);
         assertEq(ex.harvest(1), 1);
         assertEq(ex.queueLength(), 0);
-        assertEq(ex.queuedOf(bob), 0);
+        assertEq(ex.treasuryDebtOf(bob), 0);
     }
 
     function testProtocolFeesQueueWhenTreasuryShort() public {
@@ -468,8 +433,8 @@ contract ExchangeTest is Test {
         assertGt(fees, 0);
         vm.prank(owner);
         ex.claimProtocolFees();
-        assertEq(ex.balances(owner), 0);
-        assertEq(ex.queuedOf(owner), fees);
+        assertEq(usdc.balanceOf(owner), 0);
+        assertEq(ex.treasuryDebtOf(owner), fees);
         assertEq(ex.queueLength(), 2);
     }
 
@@ -484,7 +449,7 @@ contract ExchangeTest is Test {
         ex.claimProtocolFees();
         vm.prank(owner);
         ex.claimProtocolFees();
-        assertEq(ex.balances(owner), fees);
+        assertEq(usdc.balanceOf(owner), fees / 1e12);
         assertEq(ex.protocolFeeAccumulator(), 0);
     }
 
@@ -500,7 +465,7 @@ contract ExchangeTest is Test {
         ids[2] = c;
         vm.prank(alice);
         ex.closePositions(ids, noUpdate);
-        (,,,,,,, bool cOpen) = ex.positions(c);
+        (,,,,,,,, bool cOpen) = ex.positions(c);
         assertTrue(cOpen);
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
         assertEq(ex.getUserOpenPositionIds(bob).length, 1);
@@ -535,14 +500,14 @@ contract ExchangeTest is Test {
         for (uint256 i; i < n; ++i) {
             uint256 r = uint256(keccak256(abi.encode(seed, i)));
             address who = r % 2 == 0 ? alice : bob;
-            uint32 inst = uint32(r % 2);
-            uint64 base = inst == 0 ? 80_000 * P8 : 4_000 * P8;
+            uint32 instrumentId = uint32(r % 2);
+            uint64 base = instrumentId == 0 ? 80_000 * P8 : 4_000 * P8;
             uint64 px = uint64(base * (90 + (r >> 8) % 21) / 100);
-            setPrice(inst == 0 ? BTC : ETH, px);
+            setPrice(instrumentId == 0 ? BTC : ETH, px);
             uint32 lev = uint32(1 + (r >> 16) % 50);
             if (usdc.balanceOf(who) >= 1_000e6) {
                 vm.prank(who);
-                ex.openPosition(inst, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate);
+                ex.openPosition(instrumentId, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate);
             }
             uint256[] memory ids = ex.getUserOpenPositionIds(who);
             if (ids.length != 0 && (r >> 32) % 3 == 0) {
@@ -551,13 +516,118 @@ contract ExchangeTest is Test {
                 vm.prank(who);
                 ex.closePositions(one, noUpdate);
             }
-            uint256 unclaimed = ex.balances(who) / 1e12;
-            if (unclaimed != 0 && (r >> 48) % 4 == 0) {
-                vm.prank(who);
-                ex.claim(unclaimed);
-            }
         }
-        uint256 accounted = ex.treasury() + ex.totalBalances() + ex.totalLockedMargin();
-        assertEq(usdc.balanceOf(address(ex)) * 1e12, accounted);
+        assertSolvent();
+    }
+
+    function assertSolvent() internal view {
+        assertEq(usdc.balanceOf(address(ex)) * 1e12, ex.treasury() + ex.totalLockedMargin());
+        assertEq(ex.treasuryDebt(), ex.treasuryDebtOf(alice) + ex.treasuryDebtOf(bob));
+    }
+
+    function testOpenDebitsTreasuryDebtBeforeWallet() public {
+        vm.prank(owner);
+        ex.setTradeMinimums(10e18, 10e18);
+        (, uint256 queued) = bigWin(alice);
+        uint256 collateral = 1_000e18;
+        assertGt(queued, collateral);
+        uint256 walletBefore = usdc.balanceOf(alice);
+        uint256 lockedBefore = ex.totalLockedMargin();
+
+        uint256 id = open(alice, 0, true, uint128(collateral), 10);
+        (,,,, uint128 debited,,,,) = ex.positions(id);
+        assertEq(debited, collateral);
+        assertEq(usdc.balanceOf(alice), walletBefore);
+        assertEq(ex.totalLockedMargin(), lockedBefore);
+        assertEq(ex.treasuryDebtOf(alice), queued - collateral);
+        assertEq(ex.treasuryDebt(), queued - collateral);
+        assertSolvent();
+    }
+
+    function testHarvestSkipsDebitedPartOfEntry() public {
+        vm.prank(owner);
+        ex.setTradeMinimums(10e18, 10e18);
+        (uint256 paid, uint256 queued) = bigWin(alice);
+        uint256 collateral = 1_000e18;
+        uint256 id = open(alice, 0, true, uint128(collateral), 10);
+        setPrice(BTC, ex.liquidationPrice(id));
+        vm.prank(liquidator);
+        ex.liquidate(id, noUpdate);
+        assertEq(ex.treasury(), 0);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertEq(ex.treasuryDebtOf(alice), queued - collateral);
+
+        fundHouse(queued / 1e12 + 1e6);
+        uint256 treasuryBefore = ex.treasury();
+        assertEq(ex.harvest(10), 1);
+        assertEq(ex.queueLength(), 0);
+        assertEq(ex.treasuryDebt(), 0);
+        assertEq(ex.treasuryDebtOf(alice), 0);
+        assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + (queued - collateral) / 1e12);
+        assertEq(ex.treasury(), treasuryBefore - (queued - collateral) + (queued - collateral) % 1e12);
+        assertSolvent();
+    }
+
+    function testLossBurnsDebitBeforeCash() public {
+        vm.prank(owner);
+        ex.setTradeMinimums(10e18, 10e18);
+        bigWin(alice);
+        uint256 first = open(bob, 0, true, 1_000e18, 10);
+        setPrice(BTC, 88_000 * P8);
+        close(bob, first);
+        setPrice(BTC, 80_000 * P8);
+        uint256 bobDebt = ex.treasuryDebtOf(bob);
+        assertGt(bobDebt, 0);
+        assertLt(bobDebt, 1_000e18);
+        uint256 expectedDebit = bobDebt - bobDebt % 1e12;
+        uint256 walletBefore = usdc.balanceOf(bob);
+
+        uint256 id = open(bob, 0, true, 1_000e18, 10);
+        (,,,, uint128 debited,,,,) = ex.positions(id);
+        assertEq(debited, expectedDebit);
+        assertEq(usdc.balanceOf(bob), walletBefore - (1_000e18 - expectedDebit) / 1e12);
+        assertEq(ex.totalLockedMargin(), 1_000e18 - expectedDebit);
+
+        setPrice(BTC, 79_000 * P8);
+        (, int256 pnl) = ex.previewPnl(id, 79_000 * P8);
+        uint256 loss = uint256(-pnl);
+        assertLt(loss, expectedDebit);
+        uint256 treasuryBefore = ex.treasury();
+        close(bob, id);
+
+        assertEq(usdc.balanceOf(bob), walletBefore);
+        assertEq(ex.treasury(), treasuryBefore);
+        assertEq(ex.treasuryDebtOf(bob), bobDebt - loss);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertSolvent();
+    }
+
+    function testSolvencyInvariantWithDebit(uint8 n, uint256 seed) public {
+        vm.prank(owner);
+        ex.setTradeMinimums(10e18, 10e18);
+        bigWin(alice);
+        n = uint8(bound(n, 1, 24));
+        for (uint256 i; i < n; ++i) {
+            uint256 r = uint256(keccak256(abi.encode(seed, i)));
+            address who = r % 2 == 0 ? alice : bob;
+            setPrice(BTC, uint64(80_000 * P8 * (90 + (r >> 8) % 21) / 100));
+            uint32 lev = uint32(1 + (r >> 16) % 20);
+            vm.prank(who);
+            try ex.openPosition(0, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate) {} catch {}
+            uint256[] memory ids = ex.getUserOpenPositionIds(who);
+            if (ids.length != 0 && (r >> 32) % 3 == 0) {
+                uint256[] memory one = new uint256[](1);
+                one[0] = ids[0];
+                vm.prank(who);
+                ex.closePositions(one, noUpdate);
+            }
+            if (ids.length != 0 && (r >> 40) % 4 == 0) {
+                vm.prank(liquidator);
+                try ex.liquidate(ids[0], noUpdate) {} catch {}
+            }
+            if ((r >> 48) % 5 == 0) fundHouse(uint256(1 + (r >> 56) % 50_000) * 1e6);
+            if ((r >> 72) % 3 == 0) ex.harvest(3);
+        }
+        assertSolvent();
     }
 }

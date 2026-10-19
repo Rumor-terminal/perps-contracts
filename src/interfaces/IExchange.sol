@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {InstrumentLib} from "../InstrumentLib.sol";
+import {Config, Oi} from "../InstrumentLib.sol";
 
 interface IExchange {
     error UnsupportedCollateralDecimals();
-    error FeeTooHigh();
     error TradingPaused();
-    error InsufficientBalance();
     error PositionNotOpen();
-    error NotPositionOwner();
     error NotLiquidatable();
     error EmptyCloseList();
-    error TooManyPositions();
     error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();
@@ -38,27 +34,15 @@ interface IExchange {
         uint32 leverage
     );
     event PositionClosed(
-        uint256 indexed positionId,
-        address indexed trader,
-        uint256 exitPrice,
-        int256 rawPnl,
-        int256 pnl,
-        uint256 fees
+        uint256 indexed positionId, address indexed trader, uint256 exitPrice, int256 rawPnl, int256 pnl, uint256 fees
     );
-    event PositionsClosed(address indexed trader, uint256 credited, uint256 newBalance, uint256 fees);
+    event PositionsClosed(address indexed trader, uint256 paid, uint256 queued, uint256 fees);
     event Liquidated(
-        uint256 indexed positionId,
-        address indexed trader,
-        uint256 price,
-        uint256 liquidationPrice,
-        uint256 fee
+        uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
     event LiquidationBatchProcessed(uint256 requested, uint256 liquidated);
-    event Claimed(address indexed user, uint256 amount);
     event HouseFunded(address indexed from, uint256 amount);
     event ProtocolFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
-
-    function claim(uint256 amount) external;
 
     function fundHouse(uint256 amount) external;
 
@@ -87,10 +71,7 @@ interface IExchange {
 
     function getUserOpenPositionIds(address user) external view returns (uint256[] memory);
 
-    function getMarketOi(uint32 instrumentId)
-        external
-        view
-        returns (uint256 longSize, uint256 shortSize, uint256 longCap, uint256 shortCap, uint256 sizeScale);
+    function getMarketOi(uint32 instrumentId) external view returns (Oi memory);
 
     function liquidationPrice(uint256 positionId) external view returns (uint256);
 
@@ -108,7 +89,7 @@ interface IExchange {
 
     function setTradeMinimums(uint256 minCollateral, uint256 minNotional) external;
 
-    function addInstrument(InstrumentLib.Config calldata config, uint64 sizeScale, string calldata symbol)
+    function addInstrument(Config calldata config, uint64 sizeScale, string calldata symbol)
         external
         returns (uint32 instrumentId);
 
