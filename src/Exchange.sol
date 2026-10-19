@@ -6,11 +6,12 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
-import {Config, Instrument, InstrumentLib, Oi} from "./InstrumentLib.sol";
+import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
 import {IExchange} from "./interfaces/IExchange.sol";
 
 contract Exchange is IExchange, Ownable2Step, Martingaler {
@@ -27,8 +28,6 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         uint256 fees;
     }
 
-    uint256 public constant PRECISION = 1e18;
-
     IPyth public immutable pyth;
     IERC20 public immutable collateralToken;
     uint256 public immutable collateralScale;
@@ -44,7 +43,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     uint256 public winFeeRate = 0.02e18;
     uint256 public liquidationFeeRate = 0.02e18;
     uint256 public protocolFeeAccumulator;
-    uint256 public minCollateral = 1e18;
+    uint256 public minCollateral = WAD;
     uint256 public minNotional;
     bool public tradingPaused;
 
@@ -113,20 +112,17 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         whenTradingActive
         withPriceUpdate(priceUpdate)
     {
-        uint256 count = positionIds.length;
-        if (count == 0) revert EmptyCloseList();
-
         uint256[] memory prices = new uint256[](instrumentCount);
         CloseTotals memory totals;
         bool closedAny;
-        for (uint256 i; i < count; ++i) {
+        for (uint256 i; i < positionIds.length; ++i) {
             uint256 positionId = positionIds[i];
             Position memory p = positions[positionId];
             if (!p.isOpen || p.owner != msg.sender) continue;
             closedAny = true;
             _closePosition(positionId, p, prices, totals);
         }
-        if (!closedAny) return;
+        if (!closedAny) revert NothingToClose();
 
         if (totals.losses != 0) _settleLoss(totals.losses);
         if (totals.fees != 0) protocolFeeAccumulator += totals.fees;
@@ -154,29 +150,20 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         for (uint256 i; i < positionIds.length; ++i) {
             if (_tryLiquidate(prices, positionIds[i])) ++liquidated;
         }
-
-        emit LiquidationBatchProcessed(positionIds.length, liquidated);
     }
 
     function fundHouse(uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
+        uint256 funded = amount * collateralScale;
 
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
-        _settleLoss(amount * collateralScale);
+        _settleLoss(funded);
 
-        emit HouseFunded(msg.sender, amount * collateralScale);
-    }
-
-    function positionOwner(uint256 positionId) external view returns (address) {
-        return positions[positionId].owner;
+        emit HouseFunded(msg.sender, funded);
     }
 
     function getUserOpenPositionIds(address user) external view returns (uint256[] memory) {
         return userOpenPositionIds[user].values();
-    }
-
-    function getMarketOi(uint32 instrumentId) external view returns (Oi memory) {
-        return instruments[instrumentId].oi;
     }
 
     function liquidationPrice(uint256 positionId) external view returns (uint256) {
@@ -187,10 +174,6 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl) {
         Position memory p = positions[positionId];
         return p.pnl(markPrice, instruments[p.instrumentId].config);
-    }
-
-    function currentPrice(uint32 instrumentId) external view returns (uint256) {
-        return instruments[instrumentId].price(pyth, maxPriceAge);
     }
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256) {
@@ -257,8 +240,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
     receive() external payable {}
 
     function withdrawNative(address to, uint256 amount) external onlyOwner {
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeTransferFailed();
+        Address.sendValue(payable(to), amount);
     }
 
     function claimProtocolFees() external onlyOwner {
@@ -297,13 +279,13 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
 
         if (pnl > 0) {
             uint256 profit = uint256(pnl);
-            fee = (profit * winFeeRate) / PRECISION;
+            fee = (profit * winFeeRate) / WAD;
 
             totals.marginReturned += cash;
             totals.owed += debited + profit - fee;
         } else {
             uint256 loss = uint256(-pnl);
-            fee = (loss * lossFeeRate) / PRECISION;
+            fee = (loss * lossFeeRate) / WAD;
             uint256 debitLoss = loss < debited ? loss : debited;
             uint256 cashLoss = loss - debitLoss;
 
@@ -326,7 +308,7 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
 
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
-        uint256 fee = (p.collateral * liquidationFeeRate) / PRECISION;
+        uint256 fee = (p.collateral * liquidationFeeRate) / WAD;
         if (fee != 0) protocolFeeAccumulator += fee;
         emit Liquidated(positionId, p.owner, price, liqPrice, fee);
         return true;

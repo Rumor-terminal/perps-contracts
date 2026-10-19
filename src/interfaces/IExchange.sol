@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Config, Oi} from "../InstrumentLib.sol";
+import {Config} from "../InstrumentLib.sol";
 
 interface IExchange {
     error UnsupportedCollateralDecimals();
     error TradingPaused();
-    error EmptyCloseList();
+    error NothingToClose();
     error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();
-    error NativeTransferFailed();
 
     event TradingPausedUpdated(bool paused);
     event MaxPriceAgeUpdated(uint256 maxPriceAge);
@@ -38,7 +37,6 @@ interface IExchange {
     event Liquidated(
         uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
-    event LiquidationBatchProcessed(uint256 requested, uint256 liquidated);
     event HouseFunded(address indexed from, uint256 amount);
     event ProtocolFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
 
@@ -63,17 +61,11 @@ interface IExchange {
 
     function withdrawNative(address to, uint256 amount) external;
 
-    function positionOwner(uint256 positionId) external view returns (address);
-
     function getUserOpenPositionIds(address user) external view returns (uint256[] memory);
-
-    function getMarketOi(uint32 instrumentId) external view returns (Oi memory);
 
     function liquidationPrice(uint256 positionId) external view returns (uint256);
 
     function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl);
-
-    function currentPrice(uint32 instrumentId) external view returns (uint256);
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256);
 

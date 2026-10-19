@@ -5,6 +5,8 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+uint256 constant WAD = 1e18;
+
 struct Config {
     uint256 impactA;
     uint256 impactB;
@@ -43,7 +45,6 @@ library InstrumentLib {
     error OiCapExceeded();
     error InvalidPrice();
 
-    uint256 internal constant WAD = 1e18;
     int32 internal constant PRICE_EXPO = -8;
 
     function init(Instrument storage self, Config calldata config, uint64 sizeScale) internal {

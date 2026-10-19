@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Config} from "./InstrumentLib.sol";
+import {Config, WAD} from "./InstrumentLib.sol";
 
 struct Position {
     address owner;
@@ -16,10 +16,12 @@ struct Position {
 }
 
 library PositionLib {
-    uint256 internal constant WAD = 1e18;
+    function notional(Position memory p) internal pure returns (uint256) {
+        return uint256(p.collateral) * p.leverage;
+    }
 
     function size(Position memory p, uint256 sizeScale) internal pure returns (uint256) {
-        return (uint256(p.collateral) * p.leverage * sizeScale) / p.entryPrice;
+        return notional(p) * sizeScale / p.entryPrice;
     }
 
     function liquidationPrice(Position memory p, uint256 buffer) internal pure returns (uint256) {
@@ -51,7 +53,7 @@ library PositionLib {
         uint256 entryPrice = p.entryPrice;
         uint256 exitPrice = _exitPrice(entryPrice, markPrice, p.isLong);
         int256 priceDelta = p.isLong ? int256(exitPrice) - int256(entryPrice) : int256(entryPrice) - int256(exitPrice);
-        rawPnl = int256(uint256(p.collateral)) * int256(uint256(p.leverage)) * priceDelta / int256(entryPrice);
+        rawPnl = int256(notional(p)) * priceDelta / int256(entryPrice);
 
         if (rawPnl > 0) {
             netPnl = applyImpact(
