@@ -12,6 +12,7 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
 import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
+import {TraderStats, TraderStatsLib} from "./TraderStatsLib.sol";
 import {IPerpetualFutures} from "./interfaces/IPerpetualFutures.sol";
 
 contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
@@ -20,6 +21,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
     using EnumerableSet for EnumerableSet.UintSet;
     using PositionLib for Position;
     using InstrumentLib for Instrument;
+    using TraderStatsLib for TraderStats;
 
     IPyth public immutable pyth;
     IERC20 public immutable collateralToken;
@@ -39,6 +41,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
     uint256 public minCollateral = WAD;
     uint256 public minNotional;
     bool public tradingPaused;
+    mapping(address => TraderStats) public traderStats;
+    TraderStats public totalStats;
 
     constructor(address owner_, address pyth_, address collateral_) Ownable(owner_) {
         pyth = IPyth(pyth_);
@@ -90,6 +94,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
             isOpen: true
         });
         instrument.increaseOi(isLong, p.size(instrument.oi.sizeScale));
+        traderStats[msg.sender].recordOpen(p.notional());
+        totalStats.recordOpen(p.notional());
 
         positionId = nextPositionId++;
         positions[positionId] = p;
@@ -280,6 +286,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
             returned = cash - lost;
             owed = p.debited - debitLoss;
         }
+        traderStats[p.owner].recordClose(pnl, fee);
+        totalStats.recordClose(pnl, fee);
         emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
     }
 
@@ -296,6 +304,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         if (cash != 0) _settleLoss(cash);
         uint256 fee = (p.collateral * liquidationFeeRate) / WAD;
         if (fee != 0) protocolFeeAccumulator += fee;
+        traderStats[p.owner].recordLiquidation(p.collateral, fee);
+        totalStats.recordLiquidation(p.collateral, fee);
         emit Liquidated(positionId, p.owner, price, liqPrice, fee);
         return true;
     }

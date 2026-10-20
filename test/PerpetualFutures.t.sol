@@ -9,6 +9,7 @@ import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Martingaler} from "../src/Martingaler.sol";
 import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
+import {TraderStats} from "../src/TraderStatsLib.sol";
 import {Config, InstrumentLib, Oi} from "../src/InstrumentLib.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
@@ -739,6 +740,65 @@ contract PerpetualFuturesTest is Test {
         assertEq(ex.treasury(), treasuryBefore + direct % 1e12);
         assertEq(ex.protocolFeeAccumulator(), feesBefore + feeA + feeB);
         assertSolvent();
+    }
+
+    function stats(address who) internal view returns (TraderStats memory s) {
+        (s.volume, s.profit, s.loss, s.liquidated, s.fees, s.positions, s.liquidations) = ex.traderStats(who);
+    }
+
+    function totals() internal view returns (TraderStats memory s) {
+        (s.volume, s.profit, s.loss, s.liquidated, s.fees, s.positions, s.liquidations) = ex.totalStats();
+    }
+
+    function assertStats(TraderStats memory actual, TraderStats memory expected) internal pure {
+        assertEq(actual.volume, expected.volume, "volume");
+        assertEq(actual.profit, expected.profit, "profit");
+        assertEq(actual.loss, expected.loss, "loss");
+        assertEq(actual.liquidated, expected.liquidated, "liquidated");
+        assertEq(actual.fees, expected.fees, "fees");
+        assertEq(actual.positions, expected.positions, "positions");
+        assertEq(actual.liquidations, expected.liquidations, "liquidations");
+    }
+
+    function testTraderStatsTrackOpenCloseAndLiquidation() public {
+        uint256 win = open(alice, 0, true, 1_000e18, 10);
+        setPrice(BTC, 88_000 * P8);
+        (, int256 pnlWin) = ex.previewPnl(win, 88_000 * P8);
+        close(alice, win);
+        setPrice(BTC, 80_000 * P8);
+
+        uint256 lose = open(alice, 1, false, 2_000e18, 3);
+        setPrice(ETH, 4_100 * P8);
+        (, int256 pnlLose) = ex.previewPnl(lose, 4_100 * P8);
+        close(alice, lose);
+
+        uint256 liq = open(alice, 0, true, 1_000e18, 10);
+        setPrice(BTC, ex.liquidationPrice(liq));
+        assertEq(liquidate(liq), 1);
+        setPrice(BTC, 80_000 * P8);
+
+        open(bob, 0, false, 500e18, 20);
+
+        uint256 fees = uint256(pnlWin) * 0.02e18 / 1e18 + uint256(-pnlLose) * 0.02e18 / 1e18 + 1_000e18 * 0.02e18 / 1e18;
+        TraderStats memory aliceStats = TraderStats({
+            volume: 10_000e18 + 6_000e18 + 10_000e18,
+            profit: uint128(uint256(pnlWin)),
+            loss: uint128(uint256(-pnlLose)),
+            liquidated: 1_000e18,
+            fees: uint128(fees),
+            positions: 3,
+            liquidations: 1
+        });
+        TraderStats memory bobStats =
+            TraderStats({volume: 10_000e18, profit: 0, loss: 0, liquidated: 0, fees: 0, positions: 1, liquidations: 0});
+        assertStats(stats(alice), aliceStats);
+        assertStats(stats(bob), bobStats);
+
+        TraderStats memory total = aliceStats;
+        total.volume += bobStats.volume;
+        total.positions += bobStats.positions;
+        assertStats(totals(), total);
+        assertEq(stats(liquidator).volume, 0);
     }
 
     function testFuzzLossNeverExceedsCollateral(uint64 mark, uint32 lev, bool isLong) public {
