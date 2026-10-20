@@ -123,11 +123,13 @@ contract PerpetualFuturesTest is Test {
         ex.closePositions(ids, noUpdate);
     }
 
-    function liquidate(uint256 id) internal returns (uint256) {
+    function liquidate(uint256 id) internal returns (bool) {
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         vm.prank(liquidator);
-        return ex.liquidateBatch(ids, noUpdate);
+        ex.liquidateBatch(ids, noUpdate);
+        (,,,,,,,, bool isOpen) = ex.positions(id);
+        return !isOpen;
     }
 
     function oi(uint32 instrumentId) internal view returns (Oi memory o) {
@@ -211,8 +213,6 @@ contract PerpetualFuturesTest is Test {
         ex.closePositions(new uint256[](0), noUpdate);
 
         vm.prank(bob);
-        vm.expectEmit(true, true, true, true);
-        emit IPerpetualFutures.PositionsClosed(bob, 0, 0, 0);
         ex.closePositions(ids, noUpdate);
         (,,,,,,,, bool isOpen) = ex.positions(id);
         assertTrue(isOpen);
@@ -306,10 +306,10 @@ contract PerpetualFuturesTest is Test {
         assertEq(oi(0).longSize, 10_000e18 * 1e8 / (80_000 * P8));
         uint256 liq = ex.liquidationPrice(id);
         setPrice(BTC, liq + 1);
-        assertEq(liquidate(id), 0);
+        assertFalse(liquidate(id));
 
         setPrice(BTC, liq);
-        assertEq(liquidate(id), 1);
+        assertTrue(liquidate(id));
         (,,,,,,,, bool isOpen) = ex.positions(id);
         assertFalse(isOpen);
         assertEq(usdt.balanceOf(alice), WALLET - 1_000e6);
@@ -326,10 +326,10 @@ contract PerpetualFuturesTest is Test {
         assertEq(oi(0).shortSize, 10_000e18 * 1e8 / (80_000 * P8));
         uint256 liq = ex.liquidationPrice(id);
         setPrice(BTC, liq - 1);
-        assertEq(liquidate(id), 0);
+        assertFalse(liquidate(id));
 
         setPrice(BTC, liq);
-        assertEq(liquidate(id), 1);
+        assertTrue(liquidate(id));
         (,,,,,,,, bool isOpen) = ex.positions(id);
         assertFalse(isOpen);
         assertEq(usdt.balanceOf(alice), WALLET - 1_000e6);
@@ -349,8 +349,9 @@ contract PerpetualFuturesTest is Test {
         ids[1] = b;
         ids[2] = 999;
         vm.prank(liquidator);
-        uint256 n = ex.liquidateBatch(ids, noUpdate);
-        assertEq(n, 1);
+        ex.liquidateBatch(ids, noUpdate);
+        (,,,,,,,, bool aOpen) = ex.positions(a);
+        assertFalse(aOpen);
         (,,,,,,,, bool bOpen) = ex.positions(b);
         assertTrue(bOpen);
     }
@@ -470,7 +471,7 @@ contract PerpetualFuturesTest is Test {
 
         vm.prank(owner);
         ex.setTradingPaused(false);
-        assertEq(liquidate(id), 1);
+        assertTrue(liquidate(id));
     }
 
     function testFundHouseZeroReverts() public {
@@ -683,8 +684,6 @@ contract PerpetualFuturesTest is Test {
         ids[1] = b;
         ids[2] = c;
 
-        vm.expectEmit(address(ex));
-        emit IPerpetualFutures.PositionsClosed(alice, marginReturned + owed, 0, feeA + feeB);
         vm.prank(alice);
         ex.closePositions(ids, noUpdate);
 
@@ -729,8 +728,6 @@ contract PerpetualFuturesTest is Test {
 
         vm.expectEmit(address(ex));
         emit Martingaler.Enqueued(bob, ex.queueTail(), owed - losses);
-        vm.expectEmit(address(ex));
-        emit IPerpetualFutures.PositionsClosed(bob, direct, owed - losses, feeA + feeB);
         vm.prank(bob);
         ex.closePositions(ids, noUpdate);
 
@@ -775,7 +772,7 @@ contract PerpetualFuturesTest is Test {
 
         uint256 liq = open(alice, 0, true, 1_000e18, 10);
         setPrice(BTC, ex.liquidationPrice(liq));
-        assertEq(liquidate(liq), 1);
+        assertTrue(liquidate(liq));
         setPrice(BTC, 80_000 * P8);
 
         open(bob, 0, false, 500e18, 20);
@@ -828,13 +825,13 @@ contract PerpetualFuturesTest is Test {
         assertGt(shortLiq, entry);
 
         setPrice(BTC, longLiq + 1);
-        assertEq(liquidate(longId), 0);
+        assertFalse(liquidate(longId));
         setPrice(BTC, shortLiq - 1);
-        assertEq(liquidate(shortId), 0);
+        assertFalse(liquidate(shortId));
         setPrice(BTC, longLiq);
-        assertEq(liquidate(longId), 1);
+        assertTrue(liquidate(longId));
         setPrice(BTC, shortLiq);
-        assertEq(liquidate(shortId), 1);
+        assertTrue(liquidate(shortId));
         assertEq(ex.treasury(), 1_000_000e18 + 2_000e18);
         assertSolvent();
     }
@@ -872,7 +869,7 @@ contract PerpetualFuturesTest is Test {
         uint256 collateral = 1_000e18;
         uint256 id = open(alice, 0, true, uint128(collateral), 10);
         setPrice(BTC, ex.liquidationPrice(id));
-        assertEq(liquidate(id), 1);
+        assertTrue(liquidate(id));
         assertEq(ex.treasury(), 0);
         assertEq(ex.totalLockedMargin(), 0);
         assertEq(ex.treasuryDebtOf(alice), queued - collateral);
@@ -931,7 +928,6 @@ contract PerpetualFuturesTest is Test {
 
     function testLossAboveDebitBurnsDebitThenCash() public {
         (uint256 id, uint256 debited) = openWithPartialDebit(bob);
-        uint256 cash = 1_000e18 - debited;
         uint256 debtBefore = ex.treasuryDebtOf(bob);
         uint256 treasuryBefore = ex.treasury();
         uint256 queueBefore = ex.queueLength();
@@ -945,8 +941,6 @@ contract PerpetualFuturesTest is Test {
         uint256 cashLoss = loss - debited;
         uint256 fee = loss * 0.02e18 / 1e18;
 
-        vm.expectEmit(address(ex));
-        emit IPerpetualFutures.PositionsClosed(bob, cash - cashLoss, 0, fee);
         close(bob, id);
 
         assertEq(usdt.balanceOf(bob), WALLET - cashLoss / 1e12);
@@ -960,7 +954,6 @@ contract PerpetualFuturesTest is Test {
 
     function testProfitWithDebitReturnsCashAndQueuesRest() public {
         (uint256 id, uint256 debited) = openWithPartialDebit(bob);
-        uint256 cash = 1_000e18 - debited;
         uint256 debtBefore = ex.treasuryDebtOf(bob);
         uint256 treasuryBefore = ex.treasury();
         uint256 queueBefore = ex.queueLength();
@@ -975,8 +968,6 @@ contract PerpetualFuturesTest is Test {
 
         vm.expectEmit(address(ex));
         emit Martingaler.Enqueued(bob, nextId, owed);
-        vm.expectEmit(address(ex));
-        emit IPerpetualFutures.PositionsClosed(bob, cash, owed, fee);
         close(bob, id);
 
         assertEq(usdt.balanceOf(bob), WALLET);

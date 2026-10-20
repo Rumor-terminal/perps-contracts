@@ -130,19 +130,13 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         }
 
         uint256 direct = marginReturned + (owed < losses ? owed : losses);
-        uint256 paid = direct;
-        uint256 queued;
         if (owed > losses) {
-            (uint256 instant, uint256 pending) = _settleWin(msg.sender, owed - losses);
-            paid += instant;
-            queued = pending;
+            _settleWin(msg.sender, owed - losses);
         } else {
             _settleLoss(losses - owed);
         }
         if (direct != 0) _pay(msg.sender, direct);
         if (fees != 0) protocolFeeAccumulator += fees;
-
-        emit PositionsClosed(msg.sender, paid, queued, fees);
     }
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
@@ -150,11 +144,10 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         payable
         whenTradingActive
         withPriceUpdate(priceUpdate)
-        returns (uint256 liquidated)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
         for (uint256 i; i < positionIds.length; ++i) {
-            if (_tryLiquidate(prices, positionIds[i])) ++liquidated;
+            _tryLiquidate(prices, positionIds[i]);
         }
     }
 
@@ -291,14 +284,14 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
     }
 
-    function _tryLiquidate(uint256[] memory prices, uint256 positionId) internal returns (bool) {
+    function _tryLiquidate(uint256[] memory prices, uint256 positionId) internal {
         Position memory p = positions[positionId];
-        if (!p.isOpen) return false;
+        if (!p.isOpen) return;
 
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
         (bool liquidatable, uint256 liqPrice) = p.isLiquidatable(price, instrument.config.liquidationBuffer);
-        if (!liquidatable) return false;
+        if (!liquidatable) return;
 
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
@@ -307,7 +300,6 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         traderStats[p.owner].recordLiquidation(p.collateral, fee);
         totalStats.recordLiquidation(p.collateral, fee);
         emit Liquidated(positionId, p.owner, price, liqPrice, fee);
-        return true;
     }
 
     function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {

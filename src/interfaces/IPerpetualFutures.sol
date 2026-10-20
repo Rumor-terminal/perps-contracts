@@ -31,7 +31,6 @@ interface IPerpetualFutures {
     event PositionClosed(
         uint256 indexed positionId, address indexed trader, uint256 exitPrice, int256 rawPnl, int256 pnl, uint256 fees
     );
-    event PositionsClosed(address indexed trader, uint256 paid, uint256 queued, uint256 fees);
     event Liquidated(
         uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
@@ -50,10 +49,7 @@ interface IPerpetualFutures {
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
 
-    function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
-        external
-        payable
-        returns (uint256 liquidated);
+    function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
 
     function claimProtocolFees() external;
 
