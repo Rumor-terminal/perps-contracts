@@ -50,12 +50,12 @@ abstract contract Martingaler {
     function _settleWin(address user, uint256 amount) internal returns (uint256 instantAmount, uint256 queuedAmount) {
         (instantAmount, queuedAmount) = queueLength() == 0 ? _splitByTreasury(amount) : (0, amount);
 
-        if (instantAmount > 0) {
+        if (instantAmount != 0) {
             treasury -= instantAmount;
             _pay(user, instantAmount);
         }
 
-        if (queuedAmount > 0) {
+        if (queuedAmount != 0) {
             uint256 id = queueTail++;
             queue[id] = Entry(user, queuedAmount);
             treasuryDebt += queuedAmount;

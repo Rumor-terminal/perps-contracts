@@ -6,9 +6,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
-import {Exchange} from "../src/Exchange.sol";
+import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Martingaler} from "../src/Martingaler.sol";
-import {IExchange} from "../src/interfaces/IExchange.sol";
+import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
 import {Config, InstrumentLib, Oi} from "../src/InstrumentLib.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
@@ -28,7 +28,7 @@ contract MockToken is ERC20 {
     }
 }
 
-contract ExchangeTest is Test {
+contract PerpetualFuturesTest is Test {
     bytes32 constant BTC = 0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43;
     bytes32 constant ETH = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
     uint64 constant P8 = 1e8;
@@ -36,7 +36,7 @@ contract ExchangeTest is Test {
 
     MockPyth pyth;
     MockUSDT usdt;
-    Exchange ex;
+    PerpetualFutures ex;
     address owner = makeAddr("owner");
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
@@ -47,7 +47,7 @@ contract ExchangeTest is Test {
         vm.warp(1_700_000_000);
         pyth = new MockPyth(60, 1);
         usdt = new MockUSDT();
-        ex = new Exchange(owner, address(pyth), address(usdt));
+        ex = new PerpetualFutures(owner, address(pyth), address(usdt));
         vm.startPrank(owner);
         ex.setTradeMinimums(10e18, 1000e18);
         ex.addInstrument(_instrument(BTC), 1e8, "BTC");
@@ -148,7 +148,7 @@ contract ExchangeTest is Test {
 
     function testCollateralMustMatchTokenPrecision() public {
         vm.prank(alice);
-        vm.expectRevert(IExchange.CollateralPrecision.selector);
+        vm.expectRevert(IPerpetualFutures.CollateralPrecision.selector);
         ex.openPosition(0, true, 1_000e18 + 1, 10, noUpdate);
     }
 
@@ -200,23 +200,26 @@ contract ExchangeTest is Test {
         assertEq(pnl, 0);
     }
 
-    function testNothingToCloseReverts() public {
+    function testCloseSkipsForeignClosedAndMissingPositions() public {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
 
         vm.prank(alice);
-        vm.expectRevert(IExchange.NothingToClose.selector);
         ex.closePositions(new uint256[](0), noUpdate);
 
         vm.prank(bob);
-        vm.expectRevert(IExchange.NothingToClose.selector);
+        vm.expectEmit(true, true, true, true);
+        emit IPerpetualFutures.PositionsClosed(bob, 0, 0, 0);
         ex.closePositions(ids, noUpdate);
+        (,,,,,,,, bool isOpen) = ex.positions(id);
+        assertTrue(isOpen);
+        assertEq(usdt.balanceOf(bob), WALLET);
 
         close(alice, id);
-        vm.prank(alice);
-        vm.expectRevert(IExchange.NothingToClose.selector);
-        ex.closePositions(ids, noUpdate);
+        uint256 balance = usdt.balanceOf(alice);
+        close(alice, id);
+        assertEq(usdt.balanceOf(alice), balance);
     }
 
     function rejectConfig(Config memory config) internal {
@@ -377,7 +380,7 @@ contract ExchangeTest is Test {
     function testInsufficientUpdateFeeReverts() public {
         bytes[] memory data = updateData(BTC, 90_000 * P8);
         vm.prank(alice);
-        vm.expectRevert(IExchange.InsufficientUpdateFee.selector);
+        vm.expectRevert(IPerpetualFutures.InsufficientUpdateFee.selector);
         ex.openPosition{value: 0}(0, true, 1_000e18, 10, data);
     }
 
@@ -453,14 +456,14 @@ contract ExchangeTest is Test {
         ex.setTradingPaused(true);
 
         vm.prank(alice);
-        vm.expectRevert(IExchange.TradingPaused.selector);
+        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
         ex.openPosition(0, true, 1_000e18, 10, noUpdate);
         vm.prank(alice);
-        vm.expectRevert(IExchange.TradingPaused.selector);
+        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
         ex.closePositions(ids, noUpdate);
         setPrice(BTC, ex.liquidationPrice(id));
         vm.prank(liquidator);
-        vm.expectRevert(IExchange.TradingPaused.selector);
+        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
         ex.liquidateBatch(ids, noUpdate);
 
         vm.prank(owner);
@@ -469,20 +472,20 @@ contract ExchangeTest is Test {
     }
 
     function testFundHouseZeroReverts() public {
-        vm.expectRevert(IExchange.ZeroAmount.selector);
+        vm.expectRevert(IPerpetualFutures.ZeroAmount.selector);
         ex.fundHouse(0);
     }
 
     function testConstructorRejectsTokenAbove18Decimals() public {
         MockToken token = new MockToken(19);
-        vm.expectRevert(IExchange.UnsupportedCollateralDecimals.selector);
-        new Exchange(owner, address(pyth), address(token));
+        vm.expectRevert(IPerpetualFutures.UnsupportedCollateralDecimals.selector);
+        new PerpetualFutures(owner, address(pyth), address(token));
     }
 
     function testFuzz18DecimalCollateralSettlesExactly(uint128 collateral, bool isLong) public {
         collateral = uint128(bound(collateral, 1e18, 10_000e18));
         MockToken token = new MockToken(18);
-        ex = new Exchange(owner, address(pyth), address(token));
+        ex = new PerpetualFutures(owner, address(pyth), address(token));
         assertEq(ex.collateralScale(), 1);
         vm.prank(owner);
         ex.addInstrument(_instrument(BTC), 1e8, "BTC");
@@ -679,7 +682,7 @@ contract ExchangeTest is Test {
         ids[2] = c;
 
         vm.expectEmit(address(ex));
-        emit IExchange.PositionsClosed(alice, marginReturned + owed, 0, feeA + feeB);
+        emit IPerpetualFutures.PositionsClosed(alice, marginReturned + owed, 0, feeA + feeB);
         vm.prank(alice);
         ex.closePositions(ids, noUpdate);
 
@@ -692,6 +695,49 @@ contract ExchangeTest is Test {
         assertEq(ex.treasury(), 1_000_000e18 + uint256(-pnlB) - owed + owed % 1e12 + marginReturned % 1e12);
         assertEq(ex.totalLockedMargin(), 1_000e18);
         assertEq(oi(1).shortSize, 0);
+        assertSolvent();
+    }
+
+    function testCloseBatchNetsLossAgainstWinBeforeQueue() public {
+        vm.prank(owner);
+        ex.setTradeMinimums(10e18, 10e18);
+        (, uint256 aliceQueued) = bigWin(alice);
+        assertEq(ex.queueLength(), 1);
+
+        uint256 a = open(bob, 0, true, 1_000e18, 10);
+        uint256 b = open(bob, 1, false, 2_000e18, 3);
+        setPrice(BTC, 205_000 * P8);
+        setPrice(ETH, 4_100 * P8);
+        (, int256 pnlA) = ex.previewPnl(a, 205_000 * P8);
+        (, int256 pnlB) = ex.previewPnl(b, 4_100 * P8);
+        assertGt(pnlA, 0);
+        assertLt(pnlB, 0);
+        uint256 feeA = uint256(pnlA) * 0.02e18 / 1e18;
+        uint256 feeB = uint256(-pnlB) * 0.02e18 / 1e18;
+        uint256 losses = uint256(-pnlB);
+        uint256 owed = uint256(pnlA) - feeA;
+        assertGt(owed, losses);
+        uint256 marginReturned = 1_000e18 + 2_000e18 - losses;
+        uint256 direct = marginReturned + losses;
+        uint256 treasuryBefore = ex.treasury();
+        uint256 feesBefore = ex.protocolFeeAccumulator();
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = a;
+        ids[1] = b;
+
+        vm.expectEmit(address(ex));
+        emit Martingaler.Enqueued(bob, ex.queueTail(), owed - losses);
+        vm.expectEmit(address(ex));
+        emit IPerpetualFutures.PositionsClosed(bob, direct, owed - losses, feeA + feeB);
+        vm.prank(bob);
+        ex.closePositions(ids, noUpdate);
+
+        assertEq(usdt.balanceOf(bob), WALLET - 3_000e6 + direct / 1e12);
+        assertEq(ex.queueLength(), 2);
+        assertEq(ex.treasuryDebtOf(bob), owed - losses);
+        assertEq(ex.treasuryDebt(), aliceQueued + owed - losses);
+        assertEq(ex.treasury(), treasuryBefore + direct % 1e12);
+        assertEq(ex.protocolFeeAccumulator(), feesBefore + feeA + feeB);
         assertSolvent();
     }
 
@@ -839,7 +885,7 @@ contract ExchangeTest is Test {
         uint256 fee = loss * 0.02e18 / 1e18;
 
         vm.expectEmit(address(ex));
-        emit IExchange.PositionsClosed(bob, cash - cashLoss, 0, fee);
+        emit IPerpetualFutures.PositionsClosed(bob, cash - cashLoss, 0, fee);
         close(bob, id);
 
         assertEq(usdt.balanceOf(bob), WALLET - cashLoss / 1e12);
@@ -869,7 +915,7 @@ contract ExchangeTest is Test {
         vm.expectEmit(address(ex));
         emit Martingaler.Enqueued(bob, nextId, owed);
         vm.expectEmit(address(ex));
-        emit IExchange.PositionsClosed(bob, cash, owed, fee);
+        emit IPerpetualFutures.PositionsClosed(bob, cash, owed, fee);
         close(bob, id);
 
         assertEq(usdt.balanceOf(bob), WALLET);

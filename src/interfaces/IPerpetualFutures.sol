@@ -3,10 +3,9 @@ pragma solidity ^0.8.24;
 
 import {Config} from "../InstrumentLib.sol";
 
-interface IExchange {
+interface IPerpetualFutures {
     error UnsupportedCollateralDecimals();
     error TradingPaused();
-    error NothingToClose();
     error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();

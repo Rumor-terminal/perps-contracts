@@ -12,21 +12,14 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
 import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
-import {IExchange} from "./interfaces/IExchange.sol";
+import {IPerpetualFutures} from "./interfaces/IPerpetualFutures.sol";
 
-contract Exchange is IExchange, Ownable2Step, Martingaler {
+contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using EnumerableSet for EnumerableSet.UintSet;
     using PositionLib for Position;
     using InstrumentLib for Instrument;
-
-    struct CloseTotals {
-        uint256 marginReturned;
-        uint256 losses;
-        uint256 owed;
-        uint256 fees;
-    }
 
     IPyth public immutable pyth;
     IERC20 public immutable collateralToken;
@@ -103,7 +96,9 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         userOpenPositionIds[msg.sender].add(positionId);
 
         emit PositionOpened(positionId, msg.sender, instrumentId, isLong, p.entryPrice, collateral, leverage);
-        if (cash != 0) collateralToken.safeTransferFrom(msg.sender, address(this), cash / collateralScale);
+        if (cash != 0) {
+            collateralToken.safeTransferFrom(msg.sender, address(this), cash / collateralScale);
+        }
     }
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
@@ -113,30 +108,35 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         withPriceUpdate(priceUpdate)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
-        CloseTotals memory totals;
-        bool closedAny;
+        uint256 marginReturned;
+        uint256 losses;
+        uint256 owed;
+        uint256 fees;
         for (uint256 i; i < positionIds.length; ++i) {
             uint256 positionId = positionIds[i];
             Position memory p = positions[positionId];
             if (!p.isOpen || p.owner != msg.sender) continue;
-            closedAny = true;
-            _closePosition(positionId, p, prices, totals);
+            (uint256 lost, uint256 returned, uint256 credited, uint256 fee) = _closePosition(positionId, p, prices);
+            losses += lost;
+            marginReturned += returned;
+            owed += credited;
+            fees += fee;
         }
-        if (!closedAny) revert NothingToClose();
 
-        if (totals.losses != 0) _settleLoss(totals.losses);
-        if (totals.fees != 0) protocolFeeAccumulator += totals.fees;
-
-        uint256 paid = totals.marginReturned;
+        uint256 direct = marginReturned + (owed < losses ? owed : losses);
+        uint256 paid = direct;
         uint256 queued;
-        if (totals.owed != 0) {
-            (uint256 instant, uint256 pending) = _settleWin(msg.sender, totals.owed);
+        if (owed > losses) {
+            (uint256 instant, uint256 pending) = _settleWin(msg.sender, owed - losses);
             paid += instant;
             queued = pending;
+        } else {
+            _settleLoss(losses - owed);
         }
-        if (totals.marginReturned != 0) _pay(msg.sender, totals.marginReturned);
+        if (direct != 0) _pay(msg.sender, direct);
+        if (fees != 0) protocolFeeAccumulator += fees;
 
-        emit PositionsClosed(msg.sender, paid, queued, totals.fees);
+        emit PositionsClosed(msg.sender, paid, queued, fees);
     }
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
@@ -258,43 +258,29 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         if (tokens != 0) collateralToken.safeTransfer(user, tokens);
     }
 
-    function _closePosition(uint256 positionId, Position memory p, uint256[] memory prices, CloseTotals memory totals)
+    function _closePosition(uint256 positionId, Position memory p, uint256[] memory prices)
         internal
+        returns (uint256 lost, uint256 returned, uint256 owed, uint256 fee)
     {
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
-        _release(positionId, p);
+        uint256 cash = _release(positionId, p);
 
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
-        uint256 fee = _accumulateClose(totals, p.collateral, p.debited, pnl);
-        emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
-    }
-
-    function _accumulateClose(CloseTotals memory totals, uint256 collateral, uint256 debited, int256 pnl)
-        internal
-        view
-        returns (uint256 fee)
-    {
-        uint256 cash = collateral - debited;
-
         if (pnl > 0) {
             uint256 profit = uint256(pnl);
             fee = (profit * winFeeRate) / WAD;
-
-            totals.marginReturned += cash;
-            totals.owed += debited + profit - fee;
+            returned = cash;
+            owed = p.debited + profit - fee;
         } else {
             uint256 loss = uint256(-pnl);
             fee = (loss * lossFeeRate) / WAD;
-            uint256 debitLoss = loss < debited ? loss : debited;
-            uint256 cashLoss = loss - debitLoss;
-
-            totals.marginReturned += cash - cashLoss;
-            totals.losses += cashLoss;
-            totals.owed += debited - debitLoss;
+            uint256 debitLoss = loss < p.debited ? loss : p.debited;
+            lost = loss - debitLoss;
+            returned = cash - lost;
+            owed = p.debited - debitLoss;
         }
-
-        totals.fees += fee;
+        emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
     }
 
     function _tryLiquidate(uint256[] memory prices, uint256 positionId) internal returns (bool) {
@@ -329,7 +315,9 @@ contract Exchange is IExchange, Ownable2Step, Martingaler {
         view
         returns (uint256)
     {
-        if (prices[instrumentId] == 0) prices[instrumentId] = instrument.price(pyth, maxPriceAge);
+        if (prices[instrumentId] == 0) {
+            prices[instrumentId] = instrument.price(pyth, maxPriceAge);
+        }
         return prices[instrumentId];
     }
 }

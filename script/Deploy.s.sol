@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
-import {Exchange} from "../src/Exchange.sol";
+import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Config} from "../src/InstrumentLib.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 
@@ -23,24 +23,24 @@ contract Deploy is Script {
         if (isLocal) pyth = address(new MockPyth(60, 1));
         if (usdt == address(0)) usdt = address(new MockUSDT());
 
-        Exchange exchange = new Exchange(deployer, pyth, usdt);
-        exchange.setTradeMinimums(10e18, 1000e18);
-        exchange.setMaxPriceAge(isLocal ? 3600 : 120);
-        exchange.addInstrument(_instrument(BTC_USD), 1e8, "BTC");
-        exchange.addInstrument(_instrument(ETH_USD), 1e8, "ETH");
-        exchange.addInstrument(_instrument(SOL_USD), 1e8, "SOL");
-        exchange.addInstrument(_instrument(BNB_USD), 1e8, "BNB");
+        PerpetualFutures perps = new PerpetualFutures(deployer, pyth, usdt);
+        perps.setTradeMinimums(10e18, 1000e18);
+        perps.setMaxPriceAge(isLocal ? 3600 : 120);
+        perps.addInstrument(_instrument(BTC_USD), 1e8, "BTC");
+        perps.addInstrument(_instrument(ETH_USD), 1e8, "ETH");
+        perps.addInstrument(_instrument(SOL_USD), 1e8, "SOL");
+        perps.addInstrument(_instrument(BNB_USD), 1e8, "BNB");
         vm.stopBroadcast();
 
         string memory json = "deployment";
         vm.serializeUint(json, "chainId", block.chainid);
-        vm.serializeAddress(json, "exchange", address(exchange));
+        vm.serializeAddress(json, "exchange", address(perps));
         vm.serializeAddress(json, "pyth", pyth);
         vm.serializeAddress(json, "usdt", usdt);
         vm.serializeUint(json, "startBlock", block.number);
         string memory out = vm.serializeBool(json, "mockPyth", isLocal);
         vm.writeJson(out, string.concat("../deployments/", vm.toString(block.chainid), ".json"));
-        console.log("exchange", address(exchange));
+        console.log("exchange", address(perps));
         console.log("pyth", pyth);
         console.log("usdt", usdt);
     }
