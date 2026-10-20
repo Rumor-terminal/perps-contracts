@@ -5,7 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {Exchange} from "../src/Exchange.sol";
 import {Config} from "../src/InstrumentLib.sol";
-import {MockUSDC} from "../src/MockUSDC.sol";
+import {MockUSDT} from "../src/MockUSDT.sol";
 
 contract Deploy is Script {
     bytes32 constant BTC_USD = 0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43;
@@ -16,14 +16,14 @@ contract Deploy is Script {
     function run() external {
         bool isLocal = block.chainid == 31337;
         address pyth = isLocal ? address(0) : vm.envAddress("PYTH_ADDRESS");
-        address usdc = isLocal ? address(0) : vm.envOr("USDC_ADDRESS", address(0));
+        address usdt = isLocal ? address(0) : vm.envOr("USDT_ADDRESS", address(0));
 
         vm.startBroadcast();
         address deployer = msg.sender;
         if (isLocal) pyth = address(new MockPyth(60, 1));
-        if (usdc == address(0)) usdc = address(new MockUSDC());
+        if (usdt == address(0)) usdt = address(new MockUSDT());
 
-        Exchange exchange = new Exchange(deployer, pyth, usdc);
+        Exchange exchange = new Exchange(deployer, pyth, usdt);
         exchange.setTradeMinimums(10e18, 1000e18);
         exchange.setMaxPriceAge(isLocal ? 3600 : 120);
         exchange.addInstrument(_instrument(BTC_USD), 1e8, "BTC");
@@ -36,13 +36,13 @@ contract Deploy is Script {
         vm.serializeUint(json, "chainId", block.chainid);
         vm.serializeAddress(json, "exchange", address(exchange));
         vm.serializeAddress(json, "pyth", pyth);
-        vm.serializeAddress(json, "usdc", usdc);
+        vm.serializeAddress(json, "usdt", usdt);
         vm.serializeUint(json, "startBlock", block.number);
         string memory out = vm.serializeBool(json, "mockPyth", isLocal);
         vm.writeJson(out, string.concat("../deployments/", vm.toString(block.chainid), ".json"));
         console.log("exchange", address(exchange));
         console.log("pyth", pyth);
-        console.log("usdc", usdc);
+        console.log("usdt", usdt);
     }
 
     function _instrument(bytes32 priceId) internal pure returns (Config memory) {
