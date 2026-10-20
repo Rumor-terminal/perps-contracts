@@ -16,6 +16,21 @@ struct Position {
 }
 
 library PositionLib {
+    error LeverageTooLow();
+    error TradeBelowMinimum();
+    error NotionalBelowMinimum();
+    error CollateralPrecision();
+
+    function validate(Position memory p, uint256 minCollateral, uint256 minNotional, uint256 collateralScale)
+        internal
+        pure
+    {
+        if (p.leverage < 1) revert LeverageTooLow();
+        if (p.collateral < minCollateral) revert TradeBelowMinimum();
+        if (notional(p) < minNotional) revert NotionalBelowMinimum();
+        if (p.collateral % collateralScale != 0) revert CollateralPrecision();
+    }
+
     function notional(Position memory p) internal pure returns (uint256) {
         return uint256(p.collateral) * p.leverage;
     }

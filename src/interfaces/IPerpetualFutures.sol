@@ -6,7 +6,6 @@ import {Config} from "../InstrumentLib.sol";
 interface IPerpetualFutures {
     error UnsupportedCollateralDecimals();
     error TradingPaused();
-    error CollateralPrecision();
     error ZeroAmount();
     error InsufficientUpdateFee();
 

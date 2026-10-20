@@ -37,18 +37,17 @@ library InstrumentLib {
     error InvalidInstrumentConfig();
     error InvalidSizeScale();
     error InvalidInstrumentId();
-    error LeverageTooLow();
     error LeverageTooHigh();
     error PositionTooLarge();
-    error TradeBelowMinimum();
-    error NotionalBelowMinimum();
     error OiCapExceeded();
     error InvalidPrice();
 
     int32 internal constant PRICE_EXPO = -8;
 
     function init(Instrument storage self, Config calldata config, uint64 sizeScale) internal {
-        if (config.priceId == bytes32(0) || config.liquidationBuffer >= WAD) revert InvalidInstrumentConfig();
+        if (config.priceId == bytes32(0) || config.liquidationBuffer >= WAD) {
+            revert InvalidInstrumentConfig();
+        }
         if (sizeScale == 0) revert InvalidSizeScale();
 
         self.config.priceId = config.priceId;
@@ -67,7 +66,9 @@ library InstrumentLib {
 
     function setRiskParams(Instrument storage self, uint256 maxLeverage, uint256 maxNotional) internal {
         requireExists(self);
-        if (maxLeverage == 0 || maxNotional == 0) revert InvalidInstrumentConfig();
+        if (maxLeverage == 0 || maxNotional == 0) {
+            revert InvalidInstrumentConfig();
+        }
 
         self.config.maxLeverage = maxLeverage;
         self.config.maxNotional = maxNotional;
@@ -81,7 +82,9 @@ library InstrumentLib {
         uint256 profitHaircut
     ) internal {
         requireExists(self);
-        if (impactC == 0 || impactA == 0 || profitHaircut >= WAD) revert InvalidInstrumentConfig();
+        if (impactC == 0 || impactA == 0 || profitHaircut >= WAD) {
+            revert InvalidInstrumentConfig();
+        }
 
         self.config.impactC = impactC;
         self.config.impactB = impactB;
@@ -96,21 +99,10 @@ library InstrumentLib {
         self.oi.shortCap = shortCap;
     }
 
-    function checkOpen(
-        Instrument storage self,
-        uint256 collateral,
-        uint256 leverage,
-        uint256 minCollateral,
-        uint256 minNotional
-    ) internal view {
+    function validateOpenPosition(Instrument storage self, uint256 collateral, uint256 leverage) internal view {
         requireExists(self);
-        if (leverage == 0) revert LeverageTooLow();
         if (leverage > self.config.maxLeverage) revert LeverageTooHigh();
-
-        uint256 notional = collateral * leverage;
-        if (notional > self.config.maxNotional) revert PositionTooLarge();
-        if (collateral < minCollateral) revert TradeBelowMinimum();
-        if (notional < minNotional) revert NotionalBelowMinimum();
+        if (collateral * leverage > self.config.maxNotional) revert PositionTooLarge();
     }
 
     function increaseOi(Instrument storage self, bool isLong, uint256 size) internal {

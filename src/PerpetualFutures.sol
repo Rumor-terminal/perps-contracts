@@ -75,17 +75,13 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
         bytes[] calldata priceUpdate
     ) external payable whenTradingActive withPriceUpdate(priceUpdate) returns (uint256 positionId) {
         Instrument storage instrument = instruments[instrumentId];
-        instrument.checkOpen(collateral, leverage, minCollateral, minNotional);
-        uint256 price = instrument.price(pyth, maxPriceAge);
+        instrument.validateOpenPosition(collateral, leverage);
 
-        if (collateral % collateralScale != 0) revert CollateralPrecision();
         (uint256 debited, uint256 cash) = _tryDebit(msg.sender, collateral, collateralScale);
-        totalLockedMargin += cash;
-
         Position memory p = Position({
             owner: msg.sender,
             instrumentId: instrumentId,
-            entryPrice: price.toUint64(),
+            entryPrice: instrument.price(pyth, maxPriceAge).toUint64(),
             collateral: collateral,
             debited: debited.toUint128(),
             leverage: leverage,
@@ -93,18 +89,22 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
             isLong: isLong,
             isOpen: true
         });
-        instrument.increaseOi(isLong, p.size(instrument.oi.sizeScale));
-        traderStats[msg.sender].recordOpen(p.notional());
-        totalStats.recordOpen(p.notional());
+        p.validate(minCollateral, minNotional, collateralScale);
+
+        if (cash != 0) {
+            collateralToken.safeTransferFrom(msg.sender, address(this), cash / collateralScale);
+        }
 
         positionId = nextPositionId++;
         positions[positionId] = p;
         userOpenPositionIds[msg.sender].add(positionId);
 
+        totalLockedMargin += cash;
+        instrument.increaseOi(isLong, p.size(instrument.oi.sizeScale));
+        traderStats[msg.sender].recordOpen(p.notional());
+        totalStats.recordOpen(p.notional());
+
         emit PositionOpened(positionId, msg.sender, instrumentId, isLong, p.entryPrice, collateral, leverage);
-        if (cash != 0) {
-            collateralToken.safeTransferFrom(msg.sender, address(this), cash / collateralScale);
-        }
     }
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate)

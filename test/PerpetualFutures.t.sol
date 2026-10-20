@@ -9,6 +9,7 @@ import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Martingaler} from "../src/Martingaler.sol";
 import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
+import {PositionLib} from "../src/PositionLib.sol";
 import {TraderStats} from "../src/TraderStatsLib.sol";
 import {Config, InstrumentLib, Oi} from "../src/InstrumentLib.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
@@ -149,7 +150,7 @@ contract PerpetualFuturesTest is Test {
 
     function testCollateralMustMatchTokenPrecision() public {
         vm.prank(alice);
-        vm.expectRevert(IPerpetualFutures.CollateralPrecision.selector);
+        vm.expectRevert(PositionLib.CollateralPrecision.selector);
         ex.openPosition(0, true, 1_000e18 + 1, 10, noUpdate);
     }
 
@@ -422,13 +423,13 @@ contract PerpetualFuturesTest is Test {
 
     function testOpenParamChecks() public {
         vm.startPrank(alice);
-        vm.expectRevert(InstrumentLib.TradeBelowMinimum.selector);
+        vm.expectRevert(PositionLib.TradeBelowMinimum.selector);
         ex.openPosition(0, true, 9e18, 10, noUpdate);
-        vm.expectRevert(InstrumentLib.NotionalBelowMinimum.selector);
+        vm.expectRevert(PositionLib.NotionalBelowMinimum.selector);
         ex.openPosition(0, true, 10e18, 10, noUpdate);
         vm.expectRevert(InstrumentLib.LeverageTooHigh.selector);
         ex.openPosition(0, true, 1_000e18, 1001, noUpdate);
-        vm.expectRevert(InstrumentLib.LeverageTooLow.selector);
+        vm.expectRevert(PositionLib.LeverageTooLow.selector);
         ex.openPosition(0, true, 1_000e18, 0, noUpdate);
         vm.expectRevert(InstrumentLib.PositionTooLarge.selector);
         ex.openPosition(0, true, 10_000e18, 101, noUpdate);
