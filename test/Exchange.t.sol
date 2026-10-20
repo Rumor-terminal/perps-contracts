@@ -2,12 +2,31 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {Exchange} from "../src/Exchange.sol";
+import {Martingaler} from "../src/Martingaler.sol";
 import {IExchange} from "../src/interfaces/IExchange.sol";
-import {Config, InstrumentLib} from "../src/InstrumentLib.sol";
+import {Config, InstrumentLib, Oi} from "../src/InstrumentLib.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
+
+contract MockToken is ERC20 {
+    uint8 immutable dec;
+
+    constructor(uint8 dec_) ERC20("Mock", "MOCK") {
+        dec = dec_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return dec;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
 
 contract ExchangeTest is Test {
     bytes32 constant BTC = 0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43;
@@ -57,24 +76,22 @@ contract ExchangeTest is Test {
         });
     }
 
-    function updateData(bytes32 id, uint256 price8) internal returns (bytes[] memory data) {
+    function updateData(bytes32 id, int64 price, int32 expo) internal returns (bytes[] memory data) {
         vm.warp(block.timestamp + 1);
         data = new bytes[](1);
-        data[0] = pyth.createPriceFeedUpdateData(
-            id,
-            int64(uint64(price8)),
-            uint64(price8 / 1000),
-            -8,
-            int64(uint64(price8)),
-            uint64(price8 / 1000),
-            uint64(block.timestamp),
-            0
-        );
+        data[0] = pyth.createPriceFeedUpdateData(id, price, 0, expo, price, 0, uint64(block.timestamp), 0);
+    }
+
+    function updateData(bytes32 id, uint256 price8) internal returns (bytes[] memory) {
+        return updateData(id, int64(uint64(price8)), -8);
     }
 
     function setPrice(bytes32 id, uint256 price8) internal {
-        bytes[] memory data = updateData(id, price8);
-        pyth.updatePriceFeeds{value: 1}(data);
+        pyth.updatePriceFeeds{value: 1}(updateData(id, price8));
+    }
+
+    function setRawPrice(bytes32 id, int64 price, int32 expo) internal {
+        pyth.updatePriceFeeds{value: 1}(updateData(id, price, expo));
     }
 
     function fundHouse(uint256 amount) internal {
@@ -104,6 +121,17 @@ contract ExchangeTest is Test {
         ex.closePositions(ids, noUpdate);
     }
 
+    function liquidate(uint256 id) internal returns (uint256) {
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.prank(liquidator);
+        return ex.liquidateBatch(ids, noUpdate);
+    }
+
+    function oi(uint32 instrumentId) internal view returns (Oi memory o) {
+        (, o) = ex.instruments(instrumentId);
+    }
+
     function testOpenPullsCollateralFromWallet() public {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
         (address posOwner,, uint64 entry, uint128 coll,, uint32 lev,, bool isLong, bool isOpen) = ex.positions(id);
@@ -115,8 +143,7 @@ contract ExchangeTest is Test {
         assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
         assertEq(ex.totalLockedMargin(), 1_000e18);
         assertEq(usdc.balanceOf(address(ex)), 1_001_000e6);
-        uint256 longSize = ex.getMarketOi(0).longSize;
-        assertEq(longSize, 10_000e18 * 1e8 / (80_000 * P8));
+        assertEq(oi(0).longSize, 10_000e18 * 1e8 / (80_000 * P8));
     }
 
     function testCollateralMustMatchTokenPrecision() public {
@@ -144,8 +171,7 @@ contract ExchangeTest is Test {
         assertEq(ex.totalLockedMargin(), 0);
         assertEq(ex.treasury(), houseBefore - win + win % 1e12);
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
-        uint256 longSize = ex.getMarketOi(0).longSize;
-        assertEq(longSize, 0);
+        assertEq(oi(0).longSize, 0);
     }
 
     function testOpenShortCloseWithLoss() public {
@@ -174,6 +200,93 @@ contract ExchangeTest is Test {
         assertEq(pnl, 0);
     }
 
+    function testNothingToCloseReverts() public {
+        uint256 id = open(alice, 0, true, 1_000e18, 10);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+
+        vm.prank(alice);
+        vm.expectRevert(IExchange.NothingToClose.selector);
+        ex.closePositions(new uint256[](0), noUpdate);
+
+        vm.prank(bob);
+        vm.expectRevert(IExchange.NothingToClose.selector);
+        ex.closePositions(ids, noUpdate);
+
+        close(alice, id);
+        vm.prank(alice);
+        vm.expectRevert(IExchange.NothingToClose.selector);
+        ex.closePositions(ids, noUpdate);
+    }
+
+    function rejectConfig(Config memory config) internal {
+        vm.prank(owner);
+        vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
+        ex.addInstrument(config, 1e8, "BAD");
+    }
+
+    function testAddInstrumentRejectsBadConfig() public {
+        Config memory c = _instrument(BTC);
+        c.priceId = bytes32(0);
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.liquidationBuffer = 1e18;
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.maxLeverage = 0;
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.maxNotional = 0;
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.impactA = 0;
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.impactC = 0;
+        rejectConfig(c);
+        c = _instrument(BTC);
+        c.profitHaircut = 1e18;
+        rejectConfig(c);
+
+        vm.prank(owner);
+        vm.expectRevert(InstrumentLib.InvalidSizeScale.selector);
+        ex.addInstrument(_instrument(BTC), 0, "BAD");
+        assertEq(ex.instrumentCount(), 2);
+    }
+
+    function testSettersRejectUnknownInstrument() public {
+        vm.startPrank(owner);
+        vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
+        ex.setRiskParams(7, 100, 1e24);
+        vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
+        ex.setImpactConfig(7, 1e20, 1e18, 1e21, 0.05e18);
+        vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
+        ex.setOiCaps(7, 1, 1);
+        vm.stopPrank();
+    }
+
+    function testSettersRejectNonOwner() public {
+        bytes memory notOwner = abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice);
+        vm.startPrank(alice);
+        vm.expectRevert(notOwner);
+        ex.setRiskParams(0, 100, 1e24);
+        vm.expectRevert(notOwner);
+        ex.setImpactConfig(0, 1e20, 1e18, 1e21, 0.05e18);
+        vm.expectRevert(notOwner);
+        ex.setOiCaps(0, 1, 1);
+        vm.expectRevert(notOwner);
+        ex.setFeeRates(0, 0, 0);
+        vm.expectRevert(notOwner);
+        ex.setTradeMinimums(0, 0);
+        vm.expectRevert(notOwner);
+        ex.setMaxPriceAge(1);
+        vm.expectRevert(notOwner);
+        ex.setTradingPaused(true);
+        vm.expectRevert(notOwner);
+        ex.addInstrument(_instrument(BTC), 1e8, "BTC");
+        vm.stopPrank();
+    }
+
     function testLiquidationPriceFormula() public {
         uint256 longId = open(alice, 0, true, 1_000e18, 10);
         uint256 shortId = open(bob, 0, false, 1_000e18, 10);
@@ -185,15 +298,13 @@ contract ExchangeTest is Test {
 
     function testLiquidateLong() public {
         uint256 id = open(alice, 0, true, 1_000e18, 10);
+        assertEq(oi(0).longSize, 10_000e18 * 1e8 / (80_000 * P8));
         uint256 liq = ex.liquidationPrice(id);
         setPrice(BTC, liq + 1);
-        vm.prank(liquidator);
-        vm.expectRevert(IExchange.NotLiquidatable.selector);
-        ex.liquidate(id, noUpdate);
+        assertEq(liquidate(id), 0);
 
         setPrice(BTC, liq);
-        vm.prank(liquidator);
-        ex.liquidate(id, noUpdate);
+        assertEq(liquidate(id), 1);
         (,,,,,,,, bool isOpen) = ex.positions(id);
         assertFalse(isOpen);
         assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
@@ -201,6 +312,27 @@ contract ExchangeTest is Test {
         uint256 fee = 1_000e18 * 0.02e18 / 1e18;
         assertEq(ex.protocolFeeAccumulator(), fee);
         assertEq(ex.treasury(), 1_000_000e18 + 1_000e18);
+        assertEq(oi(0).longSize, 0);
+        assertEq(ex.getUserOpenPositionIds(alice).length, 0);
+    }
+
+    function testLiquidateShort() public {
+        uint256 id = open(alice, 0, false, 1_000e18, 10);
+        assertEq(oi(0).shortSize, 10_000e18 * 1e8 / (80_000 * P8));
+        uint256 liq = ex.liquidationPrice(id);
+        setPrice(BTC, liq - 1);
+        assertEq(liquidate(id), 0);
+
+        setPrice(BTC, liq);
+        assertEq(liquidate(id), 1);
+        (,,,,,,,, bool isOpen) = ex.positions(id);
+        assertFalse(isOpen);
+        assertEq(usdc.balanceOf(alice), WALLET - 1_000e6);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertEq(ex.protocolFeeAccumulator(), 1_000e18 * 0.02e18 / 1e18);
+        assertEq(ex.treasury(), 1_000_000e18 + 1_000e18);
+        assertEq(oi(0).shortSize, 0);
+        assertEq(ex.getUserOpenPositionIds(alice).length, 0);
     }
 
     function testLiquidateBatchSkipsHealthy() public {
@@ -256,6 +388,34 @@ contract ExchangeTest is Test {
         ex.openPosition(0, true, 1_000e18, 10, noUpdate);
     }
 
+    function testPriceNormalizedAcrossExponents() public {
+        setRawPrice(BTC, 80_000e5, -5);
+        uint256 a = open(alice, 0, true, 1_000e18, 10);
+        setRawPrice(BTC, 80_000e10, -10);
+        uint256 b = open(bob, 0, true, 1_000e18, 10);
+        (,, uint64 entryA,,,,,,) = ex.positions(a);
+        (,, uint64 entryB,,,,,,) = ex.positions(b);
+        assertEq(entryA, 80_000 * P8);
+        assertEq(entryB, 80_000 * P8);
+    }
+
+    function testNonPositivePriceReverts() public {
+        setRawPrice(BTC, 0, -8);
+        vm.prank(alice);
+        vm.expectRevert(InstrumentLib.InvalidPrice.selector);
+        ex.openPosition(0, true, 1_000e18, 10, noUpdate);
+
+        setRawPrice(BTC, -80_000e8, -8);
+        vm.prank(alice);
+        vm.expectRevert(InstrumentLib.InvalidPrice.selector);
+        ex.openPosition(0, true, 1_000e18, 10, noUpdate);
+
+        setRawPrice(BTC, 5, -10);
+        vm.prank(alice);
+        vm.expectRevert(InstrumentLib.InvalidPrice.selector);
+        ex.openPosition(0, true, 1_000e18, 10, noUpdate);
+    }
+
     function testOpenParamChecks() public {
         vm.startPrank(alice);
         vm.expectRevert(InstrumentLib.TradeBelowMinimum.selector);
@@ -301,15 +461,52 @@ contract ExchangeTest is Test {
         setPrice(BTC, ex.liquidationPrice(id));
         vm.prank(liquidator);
         vm.expectRevert(IExchange.TradingPaused.selector);
-        ex.liquidate(id, noUpdate);
-        vm.prank(liquidator);
-        vm.expectRevert(IExchange.TradingPaused.selector);
         ex.liquidateBatch(ids, noUpdate);
 
         vm.prank(owner);
         ex.setTradingPaused(false);
-        vm.prank(liquidator);
-        ex.liquidate(id, noUpdate);
+        assertEq(liquidate(id), 1);
+    }
+
+    function testFundHouseZeroReverts() public {
+        vm.expectRevert(IExchange.ZeroAmount.selector);
+        ex.fundHouse(0);
+    }
+
+    function testConstructorRejectsTokenAbove18Decimals() public {
+        MockToken token = new MockToken(19);
+        vm.expectRevert(IExchange.UnsupportedCollateralDecimals.selector);
+        new Exchange(owner, address(pyth), address(token));
+    }
+
+    function testFuzz18DecimalCollateralSettlesExactly(uint128 collateral, bool isLong) public {
+        collateral = uint128(bound(collateral, 1e18, 10_000e18));
+        MockToken token = new MockToken(18);
+        ex = new Exchange(owner, address(pyth), address(token));
+        assertEq(ex.collateralScale(), 1);
+        vm.prank(owner);
+        ex.addInstrument(_instrument(BTC), 1e8, "BTC");
+        token.mint(address(this), 1_000_000e18);
+        token.approve(address(ex), 1_000_000e18);
+        ex.fundHouse(1_000_000e18);
+        token.mint(alice, collateral);
+        vm.prank(alice);
+        token.approve(address(ex), collateral);
+
+        uint256 id = open(alice, 0, isLong, collateral, 10);
+        assertEq(token.balanceOf(alice), 0);
+        assertEq(ex.totalLockedMargin(), collateral);
+        setPrice(BTC, 84_000 * P8);
+        (, int256 pnl) = ex.previewPnl(id, 84_000 * P8);
+        close(alice, id);
+
+        uint256 fee = (pnl > 0 ? uint256(pnl) : uint256(-pnl)) * 0.02e18 / 1e18;
+        uint256 settled = pnl > 0 ? collateral + uint256(pnl) - fee : collateral - uint256(-pnl);
+        assertEq(token.balanceOf(alice), settled);
+        assertEq(ex.treasury(), 1_000_000e18 + collateral - settled);
+        assertEq(ex.protocolFeeAccumulator(), fee);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertEq(token.balanceOf(address(ex)), ex.treasury());
     }
 
     function bigWin(address who) internal returns (uint256 paid, uint256 queued) {
@@ -321,6 +518,11 @@ contract ExchangeTest is Test {
         uint256 treasuryBefore = ex.treasury();
         paid = ex.queueLength() == 0 ? (treasuryBefore < profit ? treasuryBefore : profit) : 0;
         queued = profit - paid;
+        uint256 nextId = ex.queueTail();
+        if (queued != 0) {
+            vm.expectEmit(address(ex));
+            emit Martingaler.Enqueued(who, nextId, queued);
+        }
         close(who, id);
         setPrice(BTC, 80_000 * P8);
     }
@@ -354,12 +556,14 @@ contract ExchangeTest is Test {
         close(bob, bobId);
         assertEq(ex.treasury(), 50_000e18);
         assertLt(50_000e18, queued);
+        uint256 remaining = queued - 50_000e18;
 
+        vm.expectEmit(address(ex));
+        emit Martingaler.QueuePaid(alice, 0, 50_000e18, remaining);
         assertEq(ex.harvest(10), 0);
         assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + 50_000e6);
         assertEq(ex.treasury(), 0);
         assertEq(ex.queueLength(), 1);
-        uint256 remaining = queued - 50_000e18;
         assertEq(ex.treasuryDebt(), remaining);
         assertEq(ex.treasuryDebtOf(alice), remaining);
         (, uint256 amount) = ex.queue(0);
@@ -367,6 +571,8 @@ contract ExchangeTest is Test {
 
         fundHouse(remaining / 1e12 + 1e6);
         uint256 treasuryBefore = ex.treasury();
+        vm.expectEmit(address(ex));
+        emit Martingaler.QueuePaid(alice, 0, remaining, 0);
         assertEq(ex.harvest(10), 1);
         assertEq(usdc.balanceOf(alice), WALLET + paid / 1e12 + 50_000e6 + remaining / 1e12);
         assertEq(ex.treasuryDebtOf(alice), 0);
@@ -459,16 +665,34 @@ contract ExchangeTest is Test {
         uint256 c = open(bob, 0, true, 1_000e18, 10);
         setPrice(BTC, 82_000 * P8);
         setPrice(ETH, 4_100 * P8);
+        (, int256 pnlA) = ex.previewPnl(a, 82_000 * P8);
+        (, int256 pnlB) = ex.previewPnl(b, 4_100 * P8);
+        assertGt(pnlA, 0);
+        assertLt(pnlB, 0);
+        uint256 feeA = uint256(pnlA) * 0.02e18 / 1e18;
+        uint256 feeB = uint256(-pnlB) * 0.02e18 / 1e18;
+        uint256 marginReturned = 1_000e18 + 2_000e18 - uint256(-pnlB);
+        uint256 owed = uint256(pnlA) - feeA;
         uint256[] memory ids = new uint256[](3);
         ids[0] = a;
         ids[1] = b;
         ids[2] = c;
+
+        vm.expectEmit(address(ex));
+        emit IExchange.PositionsClosed(alice, marginReturned + owed, 0, feeA + feeB);
         vm.prank(alice);
         ex.closePositions(ids, noUpdate);
+
         (,,,,,,,, bool cOpen) = ex.positions(c);
         assertTrue(cOpen);
         assertEq(ex.getUserOpenPositionIds(alice).length, 0);
         assertEq(ex.getUserOpenPositionIds(bob).length, 1);
+        assertEq(usdc.balanceOf(alice), WALLET - 3_000e6 + marginReturned / 1e12 + owed / 1e12);
+        assertEq(ex.protocolFeeAccumulator(), feeA + feeB);
+        assertEq(ex.treasury(), 1_000_000e18 + uint256(-pnlB) - owed + owed % 1e12 + marginReturned % 1e12);
+        assertEq(ex.totalLockedMargin(), 1_000e18);
+        assertEq(oi(1).shortSize, 0);
+        assertSolvent();
     }
 
     function testFuzzLossNeverExceedsCollateral(uint64 mark, uint32 lev, bool isLong) public {
@@ -485,38 +709,26 @@ contract ExchangeTest is Test {
         }
     }
 
-    function testFuzzLiquidationPriceSide(uint64 entry, uint32 lev) public {
+    function testFuzzLiquidationBoundary(uint64 entry, uint32 lev) public {
         entry = uint64(bound(entry, 1 * P8, 1_000_000 * P8));
-        lev = uint32(bound(lev, 1, 1000));
+        lev = uint32(bound(lev, 2, 1000));
         setPrice(BTC, entry);
         uint256 longId = open(alice, 0, true, 1_000e18, lev);
         uint256 shortId = open(bob, 0, false, 1_000e18, lev);
-        assertLe(ex.liquidationPrice(longId), entry);
-        assertGe(ex.liquidationPrice(shortId), entry);
-    }
+        uint256 longLiq = ex.liquidationPrice(longId);
+        uint256 shortLiq = ex.liquidationPrice(shortId);
+        assertLt(longLiq, entry);
+        assertGt(shortLiq, entry);
 
-    function testSolvencyInvariantAfterRandomTrades(uint8 n, uint256 seed) public {
-        n = uint8(bound(n, 1, 20));
-        for (uint256 i; i < n; ++i) {
-            uint256 r = uint256(keccak256(abi.encode(seed, i)));
-            address who = r % 2 == 0 ? alice : bob;
-            uint32 instrumentId = uint32(r % 2);
-            uint64 base = instrumentId == 0 ? 80_000 * P8 : 4_000 * P8;
-            uint64 px = uint64(base * (90 + (r >> 8) % 21) / 100);
-            setPrice(instrumentId == 0 ? BTC : ETH, px);
-            uint32 lev = uint32(1 + (r >> 16) % 50);
-            if (usdc.balanceOf(who) >= 1_000e6) {
-                vm.prank(who);
-                ex.openPosition(instrumentId, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate);
-            }
-            uint256[] memory ids = ex.getUserOpenPositionIds(who);
-            if (ids.length != 0 && (r >> 32) % 3 == 0) {
-                uint256[] memory one = new uint256[](1);
-                one[0] = ids[0];
-                vm.prank(who);
-                ex.closePositions(one, noUpdate);
-            }
-        }
+        setPrice(BTC, longLiq + 1);
+        assertEq(liquidate(longId), 0);
+        setPrice(BTC, shortLiq - 1);
+        assertEq(liquidate(shortId), 0);
+        setPrice(BTC, longLiq);
+        assertEq(liquidate(longId), 1);
+        setPrice(BTC, shortLiq);
+        assertEq(liquidate(shortId), 1);
+        assertEq(ex.treasury(), 1_000_000e18 + 2_000e18);
         assertSolvent();
     }
 
@@ -534,6 +746,8 @@ contract ExchangeTest is Test {
         uint256 walletBefore = usdc.balanceOf(alice);
         uint256 lockedBefore = ex.totalLockedMargin();
 
+        vm.expectEmit(address(ex));
+        emit Martingaler.Debited(alice, collateral);
         uint256 id = open(alice, 0, true, uint128(collateral), 10);
         (,,,, uint128 debited,,,,) = ex.positions(id);
         assertEq(debited, collateral);
@@ -551,8 +765,7 @@ contract ExchangeTest is Test {
         uint256 collateral = 1_000e18;
         uint256 id = open(alice, 0, true, uint128(collateral), 10);
         setPrice(BTC, ex.liquidationPrice(id));
-        vm.prank(liquidator);
-        ex.liquidate(id, noUpdate);
+        assertEq(liquidate(id), 1);
         assertEq(ex.treasury(), 0);
         assertEq(ex.totalLockedMargin(), 0);
         assertEq(ex.treasuryDebtOf(alice), queued - collateral);
@@ -568,36 +781,105 @@ contract ExchangeTest is Test {
         assertSolvent();
     }
 
-    function testLossBurnsDebitBeforeCash() public {
+    function openWithPartialDebit(address who) internal returns (uint256 id, uint256 debited) {
         vm.prank(owner);
         ex.setTradeMinimums(10e18, 10e18);
         bigWin(alice);
-        uint256 first = open(bob, 0, true, 1_000e18, 10);
+        uint256 first = open(who, 0, true, 500e18, 10);
         setPrice(BTC, 88_000 * P8);
-        close(bob, first);
+        close(who, first);
         setPrice(BTC, 80_000 * P8);
-        uint256 bobDebt = ex.treasuryDebtOf(bob);
-        assertGt(bobDebt, 0);
-        assertLt(bobDebt, 1_000e18);
-        uint256 expectedDebit = bobDebt - bobDebt % 1e12;
-        uint256 walletBefore = usdc.balanceOf(bob);
+        uint256 debt = ex.treasuryDebtOf(who);
+        assertGt(debt, 0);
+        assertLt(debt, 1_000e18);
 
-        uint256 id = open(bob, 0, true, 1_000e18, 10);
-        (,,,, uint128 debited,,,,) = ex.positions(id);
-        assertEq(debited, expectedDebit);
-        assertEq(usdc.balanceOf(bob), walletBefore - (1_000e18 - expectedDebit) / 1e12);
-        assertEq(ex.totalLockedMargin(), 1_000e18 - expectedDebit);
+        vm.expectEmit(address(ex));
+        emit Martingaler.Debited(who, debt - debt % 1e12);
+        id = open(who, 0, true, 1_000e18, 10);
+        (,,,, uint128 d,,,,) = ex.positions(id);
+        debited = d;
+        assertEq(debited, debt - debt % 1e12);
+        assertEq(ex.treasuryDebtOf(who), debt - debited);
+        assertEq(usdc.balanceOf(who), WALLET - (1_000e18 - debited) / 1e12);
+        assertEq(ex.totalLockedMargin(), 1_000e18 - debited);
+    }
+
+    function testLossBurnsDebitBeforeCash() public {
+        (uint256 id, uint256 debited) = openWithPartialDebit(bob);
+        uint256 debtBefore = ex.treasuryDebtOf(bob);
+        uint256 treasuryBefore = ex.treasury();
 
         setPrice(BTC, 79_000 * P8);
         (, int256 pnl) = ex.previewPnl(id, 79_000 * P8);
         uint256 loss = uint256(-pnl);
-        assertLt(loss, expectedDebit);
-        uint256 treasuryBefore = ex.treasury();
+        assertLt(loss, debited);
         close(bob, id);
 
-        assertEq(usdc.balanceOf(bob), walletBefore);
+        assertEq(usdc.balanceOf(bob), WALLET);
         assertEq(ex.treasury(), treasuryBefore);
-        assertEq(ex.treasuryDebtOf(bob), bobDebt - loss);
+        assertEq(ex.treasuryDebtOf(bob), debtBefore + debited - loss);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertSolvent();
+    }
+
+    function testLossAboveDebitBurnsDebitThenCash() public {
+        (uint256 id, uint256 debited) = openWithPartialDebit(bob);
+        uint256 cash = 1_000e18 - debited;
+        uint256 debtBefore = ex.treasuryDebtOf(bob);
+        uint256 treasuryBefore = ex.treasury();
+        uint256 queueBefore = ex.queueLength();
+        uint256 feesBefore = ex.protocolFeeAccumulator();
+
+        setPrice(BTC, 74_000 * P8);
+        (, int256 pnl) = ex.previewPnl(id, 74_000 * P8);
+        uint256 loss = uint256(-pnl);
+        assertGt(loss, debited);
+        assertLt(loss, 1_000e18);
+        uint256 cashLoss = loss - debited;
+        uint256 fee = loss * 0.02e18 / 1e18;
+
+        vm.expectEmit(address(ex));
+        emit IExchange.PositionsClosed(bob, cash - cashLoss, 0, fee);
+        close(bob, id);
+
+        assertEq(usdc.balanceOf(bob), WALLET - cashLoss / 1e12);
+        assertEq(ex.treasury(), treasuryBefore + cashLoss);
+        assertEq(ex.treasuryDebtOf(bob), debtBefore);
+        assertEq(ex.queueLength(), queueBefore);
+        assertEq(ex.protocolFeeAccumulator(), feesBefore + fee);
+        assertEq(ex.totalLockedMargin(), 0);
+        assertSolvent();
+    }
+
+    function testProfitWithDebitReturnsCashAndQueuesRest() public {
+        (uint256 id, uint256 debited) = openWithPartialDebit(bob);
+        uint256 cash = 1_000e18 - debited;
+        uint256 debtBefore = ex.treasuryDebtOf(bob);
+        uint256 treasuryBefore = ex.treasury();
+        uint256 queueBefore = ex.queueLength();
+        uint256 feesBefore = ex.protocolFeeAccumulator();
+
+        setPrice(BTC, 84_000 * P8);
+        (, int256 pnl) = ex.previewPnl(id, 84_000 * P8);
+        assertGt(pnl, 0);
+        uint256 fee = uint256(pnl) * 0.02e18 / 1e18;
+        uint256 owed = debited + uint256(pnl) - fee;
+        uint256 nextId = ex.queueTail();
+
+        vm.expectEmit(address(ex));
+        emit Martingaler.Enqueued(bob, nextId, owed);
+        vm.expectEmit(address(ex));
+        emit IExchange.PositionsClosed(bob, cash, owed, fee);
+        close(bob, id);
+
+        assertEq(usdc.balanceOf(bob), WALLET);
+        assertEq(ex.treasury(), treasuryBefore);
+        assertEq(ex.treasuryDebtOf(bob), debtBefore + owed);
+        assertEq(ex.queueLength(), queueBefore + 1);
+        (address user, uint256 amount) = ex.queue(nextId);
+        assertEq(user, bob);
+        assertEq(amount, owed);
+        assertEq(ex.protocolFeeAccumulator(), feesBefore + fee);
         assertEq(ex.totalLockedMargin(), 0);
         assertSolvent();
     }
@@ -610,10 +892,12 @@ contract ExchangeTest is Test {
         for (uint256 i; i < n; ++i) {
             uint256 r = uint256(keccak256(abi.encode(seed, i)));
             address who = r % 2 == 0 ? alice : bob;
-            setPrice(BTC, uint64(80_000 * P8 * (90 + (r >> 8) % 21) / 100));
+            uint32 instrumentId = uint32((r >> 4) % 2);
+            uint64 base = instrumentId == 0 ? 80_000 * P8 : 4_000 * P8;
+            setPrice(instrumentId == 0 ? BTC : ETH, uint64(base * (90 + (r >> 8) % 21) / 100));
             uint32 lev = uint32(1 + (r >> 16) % 20);
             vm.prank(who);
-            try ex.openPosition(0, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate) {} catch {}
+            try ex.openPosition(instrumentId, (r >> 24) % 2 == 0, 1_000e18, lev, noUpdate) {} catch {}
             uint256[] memory ids = ex.getUserOpenPositionIds(who);
             if (ids.length != 0 && (r >> 32) % 3 == 0) {
                 uint256[] memory one = new uint256[](1);
@@ -621,10 +905,7 @@ contract ExchangeTest is Test {
                 vm.prank(who);
                 ex.closePositions(one, noUpdate);
             }
-            if (ids.length != 0 && (r >> 40) % 4 == 0) {
-                vm.prank(liquidator);
-                try ex.liquidate(ids[0], noUpdate) {} catch {}
-            }
+            if (ids.length != 0 && (r >> 40) % 4 == 0) liquidate(ids[0]);
             if ((r >> 48) % 5 == 0) fundHouse(uint256(1 + (r >> 56) % 50_000) * 1e6);
             if ((r >> 72) % 3 == 0) ex.harvest(3);
         }
