@@ -4,9 +4,7 @@ pragma solidity ^0.8.24;
 import {Config} from "../InstrumentLib.sol";
 
 interface IPerpetualFutures {
-    error UnsupportedCollateralDecimals();
     error TradingPaused();
-    error ZeroAmount();
     error InsufficientUpdateFee();
 
     event TradingPausedUpdated(bool paused);
@@ -14,11 +12,13 @@ interface IPerpetualFutures {
     event FeeRatesUpdated(uint256 lossFeeRate, uint256 winFeeRate, uint256 liquidationFeeRate);
     event TradeMinimumsUpdated(uint256 minCollateral, uint256 minNotional);
     event InstrumentAdded(uint32 indexed instrumentId, bytes32 priceId, string symbol);
-    event InstrumentRiskUpdated(uint32 indexed instrumentId, uint256 maxLeverage, uint256 maxNotional);
-    event InstrumentImpactConfigUpdated(
-        uint32 indexed instrumentId, uint256 impactC, uint256 impactB, uint256 impactA, uint256 profitHaircut
+    event InstrumentRiskUpdated(
+        uint32 indexed instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer
     );
-    event MarketOiCapsUpdated(uint32 indexed instrumentId, uint96 longCap, uint96 shortCap);
+    event InstrumentImpactConfigUpdated(
+        uint32 indexed instrumentId, uint256 impactA, uint256 impactB, uint256 impactC, uint256 profitHaircut
+    );
+    event InstrumentOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
     event PositionOpened(
         uint256 indexed positionId,
         address indexed trader,
@@ -29,15 +29,12 @@ interface IPerpetualFutures {
         uint32 leverage
     );
     event PositionClosed(
-        uint256 indexed positionId, address indexed trader, uint256 exitPrice, int256 rawPnl, int256 pnl, uint256 fees
+        uint256 indexed positionId, address indexed trader, uint256 markPrice, int256 rawPnl, int256 pnl, uint256 fees
     );
     event Liquidated(
         uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
-    event HouseFunded(address indexed from, uint256 amount);
     event ProtocolFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
-
-    function fundHouse(uint256 amount) external;
 
     function openPosition(
         uint32 instrumentId,
@@ -69,21 +66,20 @@ interface IPerpetualFutures {
 
     function setFeeRates(uint256 lossFeeRate_, uint256 winFeeRate_, uint256 liquidationFeeRate_) external;
 
-    function setTradeMinimums(uint256 minCollateral, uint256 minNotional) external;
+    function setTradeMinimums(uint256 minCollateral_, uint256 minNotional_) external;
 
-    function addInstrument(Config calldata config, uint64 sizeScale, string calldata symbol)
-        external
-        returns (uint32 instrumentId);
+    function addInstrument(Config calldata config, string calldata symbol) external returns (uint32 instrumentId);
 
-    function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional) external;
+    function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer)
+        external;
 
     function setImpactConfig(
         uint32 instrumentId,
-        uint256 impactC,
-        uint256 impactB,
         uint256 impactA,
+        uint256 impactB,
+        uint256 impactC,
         uint256 profitHaircut
     ) external;
 
-    function setOiCaps(uint32 instrumentId, uint96 longCap, uint96 shortCap) external;
+    function setOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external;
 }
