@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PythErrors} from "@pythnetwork/pyth-sdk-solidity/PythErrors.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Martingaler} from "../src/Martingaler.sol";
@@ -45,11 +46,17 @@ contract PerpetualFuturesTest is Test {
     address liquidator = makeAddr("liquidator");
     bytes[] noUpdate;
 
+    function _deploy(address token) internal returns (PerpetualFutures) {
+        address implementation = address(new PerpetualFutures());
+        bytes memory init = abi.encodeCall(PerpetualFutures.initialize, (owner, address(pyth), token));
+        return PerpetualFutures(payable(new ERC1967Proxy(implementation, init)));
+    }
+
     function setUp() public {
         vm.warp(1_700_000_000);
         pyth = new MockPyth(60, 1);
         usdt = new MockUSDT();
-        ex = new PerpetualFutures(owner, address(pyth), address(usdt));
+        ex = _deploy(address(usdt));
         vm.startPrank(owner);
         ex.setTradeMinimums(10e18, 1000e18);
         ex.addInstrument(_instrument(BTC), 1e8, "BTC");
@@ -479,16 +486,16 @@ contract PerpetualFuturesTest is Test {
         ex.fundHouse(0);
     }
 
-    function testConstructorRejectsTokenAbove18Decimals() public {
+    function testInitializeRejectsTokenAbove18Decimals() public {
         MockToken token = new MockToken(19);
         vm.expectRevert(IPerpetualFutures.UnsupportedCollateralDecimals.selector);
-        new PerpetualFutures(owner, address(pyth), address(token));
+        _deploy(address(token));
     }
 
     function testFuzz18DecimalCollateralSettlesExactly(uint128 collateral, bool isLong) public {
         collateral = uint128(bound(collateral, 1e18, 10_000e18));
         MockToken token = new MockToken(18);
-        ex = new PerpetualFutures(owner, address(pyth), address(token));
+        ex = _deploy(address(token));
         assertEq(ex.collateralScale(), 1);
         vm.prank(owner);
         ex.addInstrument(_instrument(BTC), 1e8, "BTC");

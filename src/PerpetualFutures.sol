@@ -4,7 +4,8 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
@@ -15,7 +16,7 @@ import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
 import {TraderStats, TraderStatsLib} from "./TraderStatsLib.sol";
 import {IPerpetualFutures} from "./interfaces/IPerpetualFutures.sol";
 
-contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
+contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpgradeable, Martingaler {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using EnumerableSet for EnumerableSet.UintSet;
@@ -23,35 +24,50 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2Step, Martingaler {
     using InstrumentLib for Instrument;
     using TraderStatsLib for TraderStats;
 
-    IPyth public immutable pyth;
-    IERC20 public immutable collateralToken;
-    uint256 public immutable collateralScale;
+    IPyth public pyth;
+    IERC20 public collateralToken;
+    uint256 public collateralScale;
 
-    uint256 public maxPriceAge = 60;
+    uint256 public maxPriceAge;
     mapping(uint32 => Instrument) public instruments;
     uint32 public instrumentCount;
     mapping(uint256 => Position) public positions;
     uint256 public nextPositionId;
     mapping(address => EnumerableSet.UintSet) internal userOpenPositionIds;
     uint256 public totalLockedMargin;
-    uint256 public lossFeeRate = 0.02e18;
-    uint256 public winFeeRate = 0.02e18;
-    uint256 public liquidationFeeRate = 0.02e18;
+    uint256 public lossFeeRate;
+    uint256 public winFeeRate;
+    uint256 public liquidationFeeRate;
     uint256 public protocolFeeAccumulator;
-    uint256 public minCollateral = WAD;
+    uint256 public minCollateral;
     uint256 public minNotional;
     bool public tradingPaused;
     mapping(address => TraderStats) public traderStats;
     TraderStats public totalStats;
 
-    constructor(address owner_, address pyth_, address collateral_) Ownable(owner_) {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address owner_, address pyth_, address collateral_) external initializer {
+        __Ownable_init(owner_);
+        __Ownable2Step_init();
+
         pyth = IPyth(pyth_);
         collateralToken = IERC20(collateral_);
 
         uint8 decimals = IERC20Metadata(collateral_).decimals();
         if (decimals > 18) revert UnsupportedCollateralDecimals();
         collateralScale = 10 ** uint256(18 - decimals);
+
+        maxPriceAge = 60;
+        lossFeeRate = 0.02e18;
+        winFeeRate = 0.02e18;
+        liquidationFeeRate = 0.02e18;
+        minCollateral = WAD;
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     modifier whenTradingActive() {
         if (tradingPaused) revert TradingPaused();
