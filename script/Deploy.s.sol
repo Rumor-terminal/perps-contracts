@@ -32,10 +32,10 @@ contract Deploy is Script {
         );
         perps.setTradeMinimums(10e18, 1000e18);
         perps.setMaxPriceAge(isLocal ? 3600 : 120);
-        perps.addInstrument(_instrument(BTC_USD), 1e8, "BTC");
-        perps.addInstrument(_instrument(ETH_USD), 1e8, "ETH");
-        perps.addInstrument(_instrument(SOL_USD), 1e8, "SOL");
-        perps.addInstrument(_instrument(BNB_USD), 1e8, "BNB");
+        perps.addInstrument(_instrument(BTC_USD), "BTC");
+        perps.addInstrument(_instrument(ETH_USD), "ETH");
+        perps.addInstrument(_instrument(SOL_USD), "SOL");
+        perps.addInstrument(_instrument(BNB_USD), "BNB");
         vm.stopBroadcast();
 
         string memory json = "deployment";
@@ -55,14 +55,14 @@ contract Deploy is Script {
 
     function _instrument(bytes32 priceId) internal pure returns (Config memory) {
         return Config({
-            impactA: 1e21,
-            impactB: 1e18,
             priceId: priceId,
             maxLeverage: 1000,
             maxNotional: 1_000_000e18,
             liquidationBuffer: 0.0005e18,
-            profitHaircut: 0.05e18,
-            impactC: 1e20
+            impactA: 1e21,
+            impactB: 1e24,
+            impactC: 1e20,
+            profitHaircut: 0.05e18
         });
     }
 }
