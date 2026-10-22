@@ -189,7 +189,7 @@ abstract contract PerpsTest is Test {
     }
 
     function position(uint256 id) internal view returns (Position memory p) {
-        (p.owner, p.instrumentId, p.entryPrice, p.collateral, p.debited, p.leverage, p.openedAt, p.isLong, p.isOpen) =
+        (p.trader, p.instrumentId, p.entryPrice, p.collateral, p.debited, p.leverage, p.openedAt, p.isLong, p.isOpen) =
             perps.positions(id);
     }
 

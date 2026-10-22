@@ -14,6 +14,13 @@ import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
 import {TraderStats, TraderStatsLib} from "./TraderStatsLib.sol";
 import {IPerpetualFutures} from "./interfaces/IPerpetualFutures.sol";
 
+struct Settlement {
+    uint256 returned;
+    uint256 owed;
+    uint256 lost;
+    uint256 fee;
+}
+
 contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpgradeable, Martingaler {
     using SafeCast for uint256;
     using EnumerableSet for EnumerableSet.UintSet;
@@ -28,7 +35,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
     uint32 public instrumentCount;
     mapping(uint256 => Position) public positions;
     uint256 public nextPositionId;
-    mapping(address => EnumerableSet.UintSet) internal userOpenPositionIds;
+    mapping(address => EnumerableSet.UintSet) internal openPositionIdsOf;
     uint256 public totalLockedMargin;
     uint256 public lossFeeRate;
     uint256 public winFeeRate;
@@ -85,7 +92,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
 
         uint256 debited = _debit(msg.sender, collateral);
         Position memory p = Position({
-            owner: msg.sender,
+            trader: msg.sender,
             instrumentId: instrumentId,
             entryPrice: instrument.price(pyth, maxPriceAge).toUint64(),
             collateral: collateral,
@@ -99,7 +106,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
 
         positionId = nextPositionId++;
         positions[positionId] = p;
-        userOpenPositionIds[msg.sender].add(positionId);
+        openPositionIdsOf[msg.sender].add(positionId);
 
         totalLockedMargin += collateral - debited;
         instrument.increaseOi(isLong, p.size());
@@ -116,23 +123,17 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         withPriceUpdate(priceUpdate)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
-        uint256 totalLost;
-        uint256 totalReturned;
-        uint256 totalOwed;
-        uint256 totalFees;
+        Settlement memory total;
         for (uint256 i; i < positionIds.length; ++i) {
-            uint256 positionId = positionIds[i];
-            Position memory p = positions[positionId];
-            if (!p.isOpen || p.owner != msg.sender) continue;
-            (uint256 lost, uint256 returned, uint256 owed, uint256 fee) = _closePosition(positionId, p, prices);
-            totalLost += lost;
-            totalReturned += returned;
-            totalOwed += owed;
-            totalFees += fee;
+            Settlement memory s = _tryClose(positionIds[i], prices);
+            total.returned += s.returned;
+            total.owed += s.owed;
+            total.lost += s.lost;
+            total.fee += s.fee;
         }
 
-        _settleNet(msg.sender, totalReturned, totalLost, totalOwed);
-        _payFee(owner(), totalFees);
+        _settleNet(msg.sender, total);
+        _payFee(owner(), total.fee);
     }
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
@@ -149,8 +150,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         _payFee(owner(), totalFees);
     }
 
-    function getUserOpenPositionIds(address user) external view returns (uint256[] memory) {
-        return userOpenPositionIds[user].values();
+    function openPositionIds(address trader) external view returns (uint256[] memory) {
+        return openPositionIdsOf[trader].values();
     }
 
     function liquidationPrice(uint256 positionId) external view returns (uint256) {
@@ -237,21 +238,21 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         Address.sendValue(payable(to), amount);
     }
 
-    function _settleNet(address trader, uint256 returned, uint256 lost, uint256 owed) internal {
-        if (owed > lost) {
-            _settleWin(trader, owed - lost);
+    function _settleNet(address trader, Settlement memory s) internal {
+        if (s.owed > s.lost) {
+            _settleWin(trader, s.owed - s.lost);
         } else {
-            _settleLoss(lost - owed);
+            _settleLoss(s.lost - s.owed);
         }
 
-        uint256 direct = returned + Math.min(owed, lost);
+        uint256 direct = s.returned + Math.min(s.owed, s.lost);
         if (direct != 0) _pay(trader, direct);
     }
 
-    function _closePosition(uint256 positionId, Position memory p, uint256[] memory prices)
-        internal
-        returns (uint256 lost, uint256 returned, uint256 owed, uint256 fee)
-    {
+    function _tryClose(uint256 positionId, uint256[] memory prices) internal returns (Settlement memory s) {
+        Position memory p = positions[positionId];
+        if (!p.isOpen || p.trader != msg.sender) return s;
+
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
         uint256 cash = _release(positionId, p);
@@ -259,20 +260,20 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
         if (pnl > 0) {
             uint256 profit = uint256(pnl);
-            fee = (profit * winFeeRate) / WAD;
-            returned = cash;
-            owed = p.debited + profit - fee;
+            s.fee = (profit * winFeeRate) / WAD;
+            s.returned = cash;
+            s.owed = p.debited + profit - s.fee;
         } else {
             uint256 loss = uint256(-pnl);
-            fee = (loss * lossFeeRate) / WAD;
+            s.fee = (loss * lossFeeRate) / WAD;
             uint256 lossFromDebit = Math.min(loss, p.debited);
-            lost = loss - lossFromDebit;
-            returned = cash - lost;
-            owed = p.debited - lossFromDebit;
+            s.lost = loss - lossFromDebit;
+            s.returned = cash - s.lost;
+            s.owed = p.debited - lossFromDebit;
         }
-        traderStats[p.owner].recordClose(pnl, fee);
-        totalStats.recordClose(pnl, fee);
-        emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
+        traderStats[p.trader].recordClose(pnl, s.fee);
+        totalStats.recordClose(pnl, s.fee);
+        emit PositionClosed(positionId, p.trader, price, rawPnl, pnl, s.fee);
     }
 
     function _tryLiquidate(uint256 positionId, uint256[] memory prices) internal returns (uint256 fee) {
@@ -287,9 +288,9 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
         fee = (p.collateral * liquidationFeeRate) / WAD;
-        traderStats[p.owner].recordLiquidation(p.collateral, fee);
+        traderStats[p.trader].recordLiquidation(p.collateral, fee);
         totalStats.recordLiquidation(p.collateral, fee);
-        emit Liquidated(positionId, p.owner, price, liqPrice, fee);
+        emit Liquidated(positionId, p.trader, price, liqPrice, fee);
     }
 
     function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {
@@ -299,7 +300,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         positions[positionId].isOpen = false;
         totalLockedMargin -= cash;
         instrument.decreaseOi(p.isLong, p.size());
-        userOpenPositionIds[p.owner].remove(positionId);
+        openPositionIdsOf[p.trader].remove(positionId);
     }
 
     function _cachedPrice(uint256[] memory prices, uint32 instrumentId, Instrument storage instrument)

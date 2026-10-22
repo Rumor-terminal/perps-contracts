@@ -16,7 +16,7 @@ contract TradingTest is PerpsTest {
         assertEq(wallet(owner), 0);
 
         Position memory p = position(id);
-        assertEq(p.owner, alice);
+        assertEq(p.trader, alice);
         assertEq(p.instrumentId, BTC);
         assertEq(p.collateral, 50e18);
         assertEq(p.leverage, 100);
@@ -100,7 +100,7 @@ contract TradingTest is PerpsTest {
         uint256 b = open(alice, BTC, true, 50e18, 20);
         uint256 c = open(alice, BTC, false, 100e18, 10);
 
-        uint256[] memory ids = perps.getUserOpenPositionIds(alice);
+        uint256[] memory ids = perps.openPositionIds(alice);
         assertEq(ids.length, 3);
         assertEq(ids[0], a);
         assertEq(ids[1], b);
@@ -122,7 +122,7 @@ contract TradingTest is PerpsTest {
         assertEq(pool(), 29.4e18);
         assertEq(perps.totalLockedMargin(), 0);
         assertFalse(position(id).isOpen);
-        assertEq(perps.getUserOpenPositionIds(alice).length, 0);
+        assertEq(perps.openPositionIds(alice).length, 0);
         assertEq(openInterest(BTC).longSize, 0);
     }
 
@@ -214,7 +214,7 @@ contract TradingTest is PerpsTest {
         closeAll(alice, list(a, b, c));
 
         assertEq(wallet(alice) - before, 300e18);
-        assertEq(perps.getUserOpenPositionIds(alice).length, 0);
+        assertEq(perps.openPositionIds(alice).length, 0);
         assertEq(perps.totalLockedMargin(), 0);
     }
 

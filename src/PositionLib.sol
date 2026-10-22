@@ -5,7 +5,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Config, InstrumentLib, WAD} from "./InstrumentLib.sol";
 
 struct Position {
-    address owner;
+    address trader;
     uint32 instrumentId;
     uint64 entryPrice;
     uint128 collateral;

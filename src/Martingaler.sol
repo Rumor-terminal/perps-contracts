@@ -10,7 +10,7 @@ abstract contract Martingaler {
     using SafeERC20 for IERC20;
 
     struct Entry {
-        address user;
+        address trader;
         uint256 amount;
     }
 
@@ -25,9 +25,9 @@ abstract contract Martingaler {
     mapping(uint256 => Entry) public queue;
     mapping(address => uint256) public treasuryDebtOf;
 
-    event Enqueued(address indexed user, uint256 indexed id, uint256 amount);
-    event Debited(address indexed user, uint256 amount);
-    event QueuePaid(address indexed user, uint256 indexed id, uint256 amount, uint256 remaining);
+    event Enqueued(address indexed trader, uint256 indexed id, uint256 amount);
+    event Debited(address indexed trader, uint256 amount);
+    event QueuePaid(address indexed trader, uint256 indexed id, uint256 amount, uint256 remaining);
 
     function harvest(uint256 maxEntries) external returns (uint256 settled) {
         while (settled < maxEntries && _payFront()) ++settled;
@@ -45,46 +45,46 @@ abstract contract Martingaler {
         collateralScale = 10 ** uint256(18 - decimals);
     }
 
-    function _debit(address user, uint256 amount) internal returns (uint256 debited) {
-        uint256 debt = treasuryDebtOf[user];
+    function _debit(address trader, uint256 amount) internal returns (uint256 debited) {
+        uint256 debt = treasuryDebtOf[trader];
         debited = Math.min(debt, amount);
         debited -= debited % collateralScale;
 
         if (debited != 0) {
-            treasuryDebtOf[user] = debt - debited;
+            treasuryDebtOf[trader] = debt - debited;
             treasuryDebt -= debited;
-            emit Debited(user, debited);
+            emit Debited(trader, debited);
         }
 
         uint256 cash = amount - debited;
-        if (cash != 0) collateralToken.safeTransferFrom(user, address(this), cash / collateralScale);
+        if (cash != 0) collateralToken.safeTransferFrom(trader, address(this), cash / collateralScale);
     }
 
-    function _pay(address user, uint256 amount) internal {
+    function _pay(address to, uint256 amount) internal {
         uint256 dust = amount % collateralScale;
         treasury += dust;
         uint256 tokens = (amount - dust) / collateralScale;
-        if (tokens != 0) collateralToken.safeTransfer(user, tokens);
+        if (tokens != 0) collateralToken.safeTransfer(to, tokens);
     }
 
     function _settleLoss(uint256 amount) internal {
         treasury += amount;
     }
 
-    function _settleWin(address user, uint256 amount) internal returns (uint256 paid, uint256 queued) {
+    function _settleWin(address trader, uint256 amount) internal returns (uint256 paid, uint256 queued) {
         (paid, queued) = queueLength() == 0 ? _splitByTreasury(amount) : (0, amount);
 
         if (paid != 0) {
             treasury -= paid;
-            _pay(user, paid);
+            _pay(trader, paid);
         }
 
         if (queued != 0) {
             uint256 id = queueTail++;
-            queue[id] = Entry(user, queued);
+            queue[id] = Entry(trader, queued);
             treasuryDebt += queued;
-            treasuryDebtOf[user] += queued;
-            emit Enqueued(user, id, queued);
+            treasuryDebtOf[trader] += queued;
+            emit Enqueued(trader, id, queued);
         }
     }
 
@@ -100,7 +100,7 @@ abstract contract Martingaler {
 
         uint256 id = queueHead;
         Entry storage e = queue[id];
-        uint256 remainingDebt = treasuryDebtOf[e.user];
+        uint256 remainingDebt = treasuryDebtOf[e.trader];
         uint256 payableFromEntry = Math.min(e.amount, remainingDebt);
         (uint256 paid, uint256 remaining) = _splitByTreasury(payableFromEntry);
         if (paid == 0 && remaining != 0) return false;
@@ -108,10 +108,10 @@ abstract contract Martingaler {
         if (paid != 0) {
             treasury -= paid;
             treasuryDebt -= paid;
-            treasuryDebtOf[e.user] = remainingDebt - paid;
-            _pay(e.user, paid);
+            treasuryDebtOf[e.trader] = remainingDebt - paid;
+            _pay(e.trader, paid);
         }
-        emit QueuePaid(e.user, id, paid, remaining);
+        emit QueuePaid(e.trader, id, paid, remaining);
 
         settled = remaining == 0;
         if (settled) {

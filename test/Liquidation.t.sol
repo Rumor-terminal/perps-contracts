@@ -66,7 +66,7 @@ contract LiquidationTest is PerpsTest {
         assertEq(wallet(alice), before);
         assertEq(pool(), 98e18);
         assertEq(perps.totalLockedMargin(), 0);
-        assertEq(perps.getUserOpenPositionIds(alice).length, 0);
+        assertEq(perps.openPositionIds(alice).length, 0);
         assertEq(openInterest(BTC).longSize, 0);
     }
 
@@ -105,7 +105,7 @@ contract LiquidationTest is PerpsTest {
         assertEq(wallet(alice), before);
         assertTrue(position(safe).isOpen);
         assertEq(perps.totalLockedMargin(), 200e18);
-        uint256[] memory ids = perps.getUserOpenPositionIds(alice);
+        uint256[] memory ids = perps.openPositionIds(alice);
         assertEq(ids.length, 1);
         assertEq(ids[0], safe);
     }

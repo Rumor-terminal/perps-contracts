@@ -53,7 +53,7 @@ interface IPerpetualFutures {
 
     function withdrawNative(address to, uint256 amount) external;
 
-    function getUserOpenPositionIds(address user) external view returns (uint256[] memory);
+    function openPositionIds(address trader) external view returns (uint256[] memory);
 
     function liquidationPrice(uint256 positionId) external view returns (uint256);
 

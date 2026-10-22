@@ -71,7 +71,7 @@ contract PerpsHandler is Test {
         address trader = actors[bound(actorSeed, 0, actors.length - 1)];
         refreshPrices();
 
-        uint256[] memory ids = perps.getUserOpenPositionIds(trader);
+        uint256[] memory ids = perps.openPositionIds(trader);
         vm.prank(trader);
         perps.closePositions(ids, new bytes[](0));
     }
