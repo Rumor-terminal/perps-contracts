@@ -8,7 +8,7 @@ import {PerpsTest} from "./utils/PerpsTest.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Config, InstrumentLib} from "../src/InstrumentLib.sol";
 import {PositionLib} from "../src/PositionLib.sol";
-import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
+import {IPerpetualFutures, OpenRequest} from "../src/interfaces/IPerpetualFutures.sol";
 
 contract AdminTest is PerpsTest {
     function test_CannotBeInitializedTwice() public {
@@ -28,7 +28,7 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(unauthorized);
         perps.setMaxPriceAge(60);
         vm.expectRevert(unauthorized);
-        perps.setTradingPaused(true);
+        perps.setExecutor(bob, true);
         vm.expectRevert(unauthorized);
         perps.setFeeRates(0, 0, 0);
         vm.expectRevert(unauthorized);
@@ -86,37 +86,6 @@ contract AdminTest is PerpsTest {
         vm.stopPrank();
     }
 
-    function test_PauseStopsOpeningClosingAndLiquidating() public {
-        uint256 id = open(alice, BTC, true, 100e18, 1000);
-        setPrice(BTC, perps.liquidationPrice(id));
-        vm.prank(owner);
-        perps.setTradingPaused(true);
-
-        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
-        open(alice, BTC, true, 100e18, 10);
-        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
-        close(alice, id);
-        vm.expectRevert(IPerpetualFutures.TradingPaused.selector);
-        liquidate(id);
-
-        vm.prank(owner);
-        perps.setTradingPaused(false);
-        liquidate(id);
-        assertFalse(position(id).isOpen);
-    }
-
-    function test_PauseDoesNotStopQueuePayouts() public {
-        uint256 owed = winBtc(alice);
-        lose(1_000e18);
-        vm.prank(owner);
-        perps.setTradingPaused(true);
-        uint256 before = wallet(alice);
-
-        perps.harvest(10);
-
-        assertEq(wallet(alice) - before, owed / SCALE * SCALE);
-    }
-
     function test_QueuePayoutsDoNotNeedAPrice() public {
         uint256 owed = winBtc(alice);
         lose(1_000e18);
@@ -149,8 +118,7 @@ contract AdminTest is PerpsTest {
         assertEq(perps.pythUpdateFee(new bytes[](0)), 0);
         uint256 balanceBefore = address(perps).balance;
 
-        vm.prank(alice);
-        uint256 id = perps.openPosition(BTC, true, 100e18, 10, update);
+        uint256 id = open(openRequest(alice, BTC, true, 100e18, 10), update);
 
         assertEq(position(id).entryPrice, 101_000e8);
         assertEq(balanceBefore - address(perps).balance, 1);
@@ -160,10 +128,10 @@ contract AdminTest is PerpsTest {
         skip(1);
         bytes[] memory update = priceUpdate(BTC, int64(101_000e8), -8);
         vm.deal(address(perps), 0);
+        OpenRequest memory request = openRequest(alice, BTC, true, 100e18, 10);
 
         vm.expectRevert(IPerpetualFutures.InsufficientUpdateFee.selector);
-        vm.prank(alice);
-        perps.openPosition(BTC, true, 100e18, 10, update);
+        open(request, update);
     }
 
     function test_PythExponentIsNormalized() public {

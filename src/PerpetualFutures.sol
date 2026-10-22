@@ -3,6 +3,9 @@ pragma solidity ^0.8.24;
 
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
@@ -12,7 +15,7 @@ import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
 import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
 import {TraderStats, TraderStatsLib} from "./TraderStatsLib.sol";
-import {IPerpetualFutures} from "./interfaces/IPerpetualFutures.sol";
+import {IPerpetualFutures, OpenRequest, CloseRequest} from "./interfaces/IPerpetualFutures.sol";
 
 struct Settlement {
     uint256 returned;
@@ -21,12 +24,25 @@ struct Settlement {
     uint256 fee;
 }
 
-contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpgradeable, Martingaler {
+contract PerpetualFutures is
+    IPerpetualFutures,
+    Ownable2StepUpgradeable,
+    UUPSUpgradeable,
+    EIP712Upgradeable,
+    NoncesKeyedUpgradeable,
+    Martingaler
+{
     using SafeCast for uint256;
     using EnumerableSet for EnumerableSet.UintSet;
     using PositionLib for Position;
     using InstrumentLib for Instrument;
     using TraderStatsLib for TraderStats;
+
+    bytes32 public constant OPEN_POSITION_TYPEHASH = keccak256(
+        "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline)"
+    );
+    bytes32 public constant CLOSE_POSITIONS_TYPEHASH =
+        keccak256("ClosePositions(address trader,uint256[] positionIds,uint256 nonce,uint256 deadline)");
 
     IPyth public pyth;
 
@@ -42,7 +58,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
     uint256 public liquidationFeeRate;
     uint256 public minCollateral;
     uint256 public minNotional;
-    bool public tradingPaused;
+    mapping(address => bool) public isExecutor;
     mapping(address => TraderStats) public traderStats;
     TraderStats public totalStats;
 
@@ -53,6 +69,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
     function initialize(address owner_, address pyth_, address collateral_) external initializer {
         __Ownable_init(owner_);
         __Ownable2Step_init();
+        __EIP712_init("PerpetualFutures", "1");
 
         pyth = IPyth(pyth_);
         _initCollateral(collateral_);
@@ -66,8 +83,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    modifier whenTradingActive() {
-        if (tradingPaused) revert TradingPaused();
+    modifier onlyExecutor() {
+        if (!isExecutor[msg.sender]) revert NotExecutor();
         _;
     }
 
@@ -80,66 +97,81 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         _;
     }
 
-    function openPosition(
-        uint32 instrumentId,
-        bool isLong,
-        uint128 collateral,
-        uint32 leverage,
-        bytes[] calldata priceUpdate
-    ) external payable whenTradingActive withPriceUpdate(priceUpdate) returns (uint256 positionId) {
-        Instrument storage instrument = instruments[instrumentId];
-        instrument.validateOpenPosition(collateral, leverage);
+    function openPosition(OpenRequest calldata request, bytes calldata signature, bytes[] calldata priceUpdate)
+        external
+        payable
+        onlyExecutor
+        withPriceUpdate(priceUpdate)
+        returns (uint256 positionId)
+    {
+        address trader = request.trader;
+        _verifySignature(
+            trader, keccak256(abi.encode(OPEN_POSITION_TYPEHASH, request)), request.nonce, request.deadline, signature
+        );
 
-        uint256 debited = _debit(msg.sender, collateral);
+        Instrument storage instrument = instruments[request.instrumentId];
+        instrument.validateOpenPosition(request.collateral, request.leverage);
+
+        uint256 debited = _debit(trader, request.collateral);
         Position memory p = Position({
-            trader: msg.sender,
-            instrumentId: instrumentId,
+            trader: trader,
+            instrumentId: request.instrumentId,
             entryPrice: instrument.price(pyth, maxPriceAge).toUint64(),
-            collateral: collateral,
+            collateral: request.collateral,
             debited: debited.toUint128(),
-            leverage: leverage,
+            leverage: request.leverage,
             openedAt: uint64(block.timestamp),
-            isLong: isLong,
+            isLong: request.isLong,
             isOpen: true
         });
         p.validate(minCollateral, minNotional, collateralScale);
 
         positionId = nextPositionId++;
         positions[positionId] = p;
-        openPositionIdsOf[msg.sender].add(positionId);
+        openPositionIdsOf[trader].add(positionId);
 
-        totalLockedMargin += collateral - debited;
-        instrument.increaseOi(isLong, p.size());
-        traderStats[msg.sender].recordOpen(p.notional());
+        totalLockedMargin += p.collateral - debited;
+        instrument.increaseOi(p.isLong, p.size());
+        traderStats[trader].recordOpen(p.notional());
         totalStats.recordOpen(p.notional());
 
-        emit PositionOpened(positionId, msg.sender, instrumentId, isLong, p.entryPrice, collateral, leverage);
+        emit PositionOpened(positionId, trader, p.instrumentId, p.isLong, p.entryPrice, p.collateral, p.leverage);
     }
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
         external
         payable
-        whenTradingActive
         withPriceUpdate(priceUpdate)
     {
-        uint256[] memory prices = new uint256[](instrumentCount);
-        Settlement memory total;
-        for (uint256 i; i < positionIds.length; ++i) {
-            Settlement memory s = _tryClose(positionIds[i], prices);
-            total.returned += s.returned;
-            total.owed += s.owed;
-            total.lost += s.lost;
-            total.fee += s.fee;
-        }
+        _closePositions(msg.sender, positionIds);
+    }
 
-        _settleNet(msg.sender, total);
-        _payFee(owner(), total.fee);
+    function closePositionsWithSig(
+        CloseRequest calldata request,
+        bytes calldata signature,
+        bytes[] calldata priceUpdate
+    ) external payable onlyExecutor withPriceUpdate(priceUpdate) {
+        _verifySignature(
+            request.trader,
+            keccak256(
+                abi.encode(
+                    CLOSE_POSITIONS_TYPEHASH,
+                    request.trader,
+                    keccak256(abi.encodePacked(request.positionIds)),
+                    request.nonce,
+                    request.deadline
+                )
+            ),
+            request.nonce,
+            request.deadline,
+            signature
+        );
+        _closePositions(request.trader, request.positionIds);
     }
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
         external
         payable
-        whenTradingActive
         withPriceUpdate(priceUpdate)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
@@ -173,9 +205,9 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         emit MaxPriceAgeUpdated(maxPriceAge_);
     }
 
-    function setTradingPaused(bool paused) external onlyOwner {
-        tradingPaused = paused;
-        emit TradingPausedUpdated(paused);
+    function setExecutor(address executor, bool allowed) external onlyOwner {
+        isExecutor[executor] = allowed;
+        emit ExecutorUpdated(executor, allowed);
     }
 
     function setFeeRates(uint256 lossFeeRate_, uint256 winFeeRate_, uint256 liquidationFeeRate_) external onlyOwner {
@@ -238,6 +270,35 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         Address.sendValue(payable(to), amount);
     }
 
+    function _verifySignature(
+        address trader,
+        bytes32 structHash,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) internal {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        _useCheckedNonce(trader, nonce);
+        if (!SignatureChecker.isValidSignatureNow(trader, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSignature();
+        }
+    }
+
+    function _closePositions(address trader, uint256[] calldata positionIds) internal {
+        uint256[] memory prices = new uint256[](instrumentCount);
+        Settlement memory total;
+        for (uint256 i; i < positionIds.length; ++i) {
+            Settlement memory s = _tryClose(positionIds[i], trader, prices);
+            total.returned += s.returned;
+            total.owed += s.owed;
+            total.lost += s.lost;
+            total.fee += s.fee;
+        }
+
+        _settleNet(trader, total);
+        _payFee(owner(), total.fee);
+    }
+
     function _settleNet(address trader, Settlement memory s) internal {
         if (s.owed > s.lost) {
             _settleWin(trader, s.owed - s.lost);
@@ -249,9 +310,12 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         if (direct != 0) _pay(trader, direct);
     }
 
-    function _tryClose(uint256 positionId, uint256[] memory prices) internal returns (Settlement memory s) {
+    function _tryClose(uint256 positionId, address trader, uint256[] memory prices)
+        internal
+        returns (Settlement memory s)
+    {
         Position memory p = positions[positionId];
-        if (!p.isOpen || p.trader != msg.sender) return s;
+        if (!p.isOpen || p.trader != trader) return s;
 
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(prices, p.instrumentId, instrument);

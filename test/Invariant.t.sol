@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {PerpsTest} from "./utils/PerpsTest.sol";
+import {PerpsSigner} from "./utils/PerpsSigner.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
 import {Oi} from "../src/InstrumentLib.sol";
+import {OpenRequest, CloseRequest} from "../src/interfaces/IPerpetualFutures.sol";
 
-contract PerpsHandler is Test {
+contract PerpsHandler is PerpsSigner {
     PerpetualFutures internal perps;
     MockPyth internal pyth;
     address internal owner;
+    address internal executor;
     bytes32[3] internal feeds;
     uint256[3] internal initialPrices;
     uint256[3] internal prices;
@@ -23,17 +25,19 @@ contract PerpsHandler is Test {
         MockPyth pyth_,
         MockUSDT usdt,
         address owner_,
+        address executor_,
         bytes32[3] memory feeds_,
         uint256[3] memory prices_
     ) {
         perps = perps_;
         pyth = pyth_;
         owner = owner_;
+        executor = executor_;
         feeds = feeds_;
         initialPrices = prices_;
         prices = prices_;
         for (uint256 i; i < 3; ++i) {
-            address actor = makeAddr(string.concat("actor", vm.toString(i)));
+            address actor = makeTrader(string.concat("actor", vm.toString(i)));
             usdt.mint(actor, 1e15);
             vm.prank(actor);
             usdt.approve(address(perps), type(uint256).max);
@@ -51,8 +55,11 @@ contract PerpsHandler is Test {
         leverage = bound(leverage, 10, 1_000);
         refreshPrices();
 
-        vm.prank(actors[bound(actorSeed, 0, actors.length - 1)]);
-        positionIds.push(perps.openPosition(market, isLong, uint128(margin), uint32(leverage), new bytes[](0)));
+        address trader = actors[bound(actorSeed, 0, actors.length - 1)];
+        OpenRequest memory request = openRequest(trader, market, isLong, margin, leverage);
+        bytes memory signature = sign(perps, keyOf[trader], request);
+        vm.prank(executor);
+        positionIds.push(perps.openPosition(request, signature, new bytes[](0)));
     }
 
     function close(uint256 idSeed) external {
@@ -71,9 +78,10 @@ contract PerpsHandler is Test {
         address trader = actors[bound(actorSeed, 0, actors.length - 1)];
         refreshPrices();
 
-        uint256[] memory ids = perps.openPositionIds(trader);
-        vm.prank(trader);
-        perps.closePositions(ids, new bytes[](0));
+        CloseRequest memory request = closeRequest(trader, perps.openPositionIds(trader));
+        bytes memory signature = sign(perps, keyOf[trader], request);
+        vm.prank(executor);
+        perps.closePositionsWithSig(request, signature, new bytes[](0));
     }
 
     function liquidate(uint256 idSeed) external {
@@ -117,7 +125,7 @@ contract InvariantTest is PerpsTest {
     function setUp() public override {
         super.setUp();
         handler = new PerpsHandler(
-            perps, pyth, usdt, owner, [BTC_FEED, ETH_FEED, BNB_FEED], [BTC_PRICE, ETH_PRICE, BNB_PRICE]
+            perps, pyth, usdt, owner, executor, [BTC_FEED, ETH_FEED, BNB_FEED], [BTC_PRICE, ETH_PRICE, BNB_PRICE]
         );
         vm.deal(address(handler), 100 ether);
         targetContract(address(handler));

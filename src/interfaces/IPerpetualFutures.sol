@@ -3,11 +3,30 @@ pragma solidity ^0.8.24;
 
 import {Config} from "../InstrumentLib.sol";
 
-interface IPerpetualFutures {
-    error TradingPaused();
-    error InsufficientUpdateFee();
+struct OpenRequest {
+    address trader;
+    uint32 instrumentId;
+    bool isLong;
+    uint128 collateral;
+    uint32 leverage;
+    uint256 nonce;
+    uint256 deadline;
+}
 
-    event TradingPausedUpdated(bool paused);
+struct CloseRequest {
+    address trader;
+    uint256[] positionIds;
+    uint256 nonce;
+    uint256 deadline;
+}
+
+interface IPerpetualFutures {
+    error InsufficientUpdateFee();
+    error NotExecutor();
+    error SignatureExpired();
+    error InvalidSignature();
+
+    event ExecutorUpdated(address indexed executor, bool allowed);
     event MaxPriceAgeUpdated(uint256 maxPriceAge);
     event FeeRatesUpdated(uint256 lossFeeRate, uint256 winFeeRate, uint256 liquidationFeeRate);
     event TradeMinimumsUpdated(uint256 minCollateral, uint256 minNotional);
@@ -39,15 +58,18 @@ interface IPerpetualFutures {
         uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
 
-    function openPosition(
-        uint32 instrumentId,
-        bool isLong,
-        uint128 collateral,
-        uint32 leverage,
-        bytes[] calldata priceUpdate
-    ) external payable returns (uint256 positionId);
+    function openPosition(OpenRequest calldata request, bytes calldata signature, bytes[] calldata priceUpdate)
+        external
+        payable
+        returns (uint256 positionId);
 
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
+
+    function closePositionsWithSig(
+        CloseRequest calldata request,
+        bytes calldata signature,
+        bytes[] calldata priceUpdate
+    ) external payable;
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
 
@@ -63,7 +85,7 @@ interface IPerpetualFutures {
 
     function setMaxPriceAge(uint256 maxPriceAge_) external;
 
-    function setTradingPaused(bool paused) external;
+    function setExecutor(address executor, bool allowed) external;
 
     function setFeeRates(uint256 lossFeeRate_, uint256 winFeeRate_, uint256 liquidationFeeRate_) external;
 

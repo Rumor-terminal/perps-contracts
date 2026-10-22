@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
 import {MockPyth} from "@pythnetwork/pyth-sdk-solidity/MockPyth.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PerpetualFutures} from "../../src/PerpetualFutures.sol";
 import {MockUSDT} from "../../src/MockUSDT.sol";
+import {OpenRequest, CloseRequest} from "../../src/interfaces/IPerpetualFutures.sol";
 import {Config, Oi} from "../../src/InstrumentLib.sol";
 import {Position} from "../../src/PositionLib.sol";
+import {PerpsSigner} from "./PerpsSigner.sol";
 
-abstract contract PerpsTest is Test {
+abstract contract PerpsTest is PerpsSigner {
     bytes32 internal constant BTC_FEED = 0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43;
     bytes32 internal constant ETH_FEED = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
     bytes32 internal constant BNB_FEED = 0x2f95862b045670cd22bee3114c39763a4a08beeb663b145d283c31d7d1101c4f;
@@ -31,10 +32,11 @@ abstract contract PerpsTest is Test {
 
     address internal owner = makeAddr("owner");
     address internal keeper = makeAddr("keeper");
-    address internal alice = makeAddr("alice");
-    address internal bob = makeAddr("bob");
-    address internal carol = makeAddr("carol");
-    address internal loser = makeAddr("loser");
+    address internal executor = makeAddr("executor");
+    address internal alice = makeTrader("alice");
+    address internal bob = makeTrader("bob");
+    address internal carol = makeTrader("carol");
+    address internal loser = makeTrader("loser");
 
     function setUp() public virtual {
         vm.warp(1_750_000_000);
@@ -51,6 +53,7 @@ abstract contract PerpsTest is Test {
         vm.deal(address(perps), 1 ether);
 
         vm.startPrank(owner);
+        perps.setExecutor(executor, true);
         perps.setTradeMinimums(1e18, 10e18);
         perps.setMaxPriceAge(MAX_PRICE_AGE);
         perps.addInstrument(launchConfig(BTC_FEED, 814.598e18), "BTC");
@@ -120,8 +123,20 @@ abstract contract PerpsTest is Test {
         internal
         returns (uint256)
     {
-        vm.prank(trader);
-        return perps.openPosition(market, isLong, uint128(margin), uint32(leverage), new bytes[](0));
+        return open(openRequest(trader, market, isLong, margin, leverage), new bytes[](0));
+    }
+
+    function open(OpenRequest memory request, bytes[] memory update) internal returns (uint256) {
+        bytes memory signature = sign(perps, keyOf[request.trader], request);
+        vm.prank(executor);
+        return perps.openPosition(request, signature, update);
+    }
+
+    function closeWithSig(address trader, uint256[] memory ids) internal {
+        CloseRequest memory request = closeRequest(trader, ids);
+        bytes memory signature = sign(perps, keyOf[trader], request);
+        vm.prank(executor);
+        perps.closePositionsWithSig(request, signature, new bytes[](0));
     }
 
     function close(address trader, uint256 id) internal {
