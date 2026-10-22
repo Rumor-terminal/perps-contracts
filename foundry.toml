@@ -19,3 +19,8 @@ runs = 512
 
 [lint]
 exclude_lints = ["unsafe-typecast", "mixed-case-variable", "screaming-snake-case-const"]
+
+[invariant]
+runs = 128
+depth = 100
+fail_on_revert = true

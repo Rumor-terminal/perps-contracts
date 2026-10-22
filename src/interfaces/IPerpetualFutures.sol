@@ -34,7 +34,6 @@ interface IPerpetualFutures {
     event Liquidated(
         uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
     );
-    event ProtocolFeesClaimed(address indexed recipient, uint256 amount, uint256 paid);
 
     function openPosition(
         uint32 instrumentId,
@@ -47,8 +46,6 @@ interface IPerpetualFutures {
     function closePositions(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
-
-    function claimProtocolFees() external;
 
     function withdrawNative(address to, uint256 amount) external;
 

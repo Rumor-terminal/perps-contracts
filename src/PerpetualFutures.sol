@@ -33,7 +33,6 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
     uint256 public lossFeeRate;
     uint256 public winFeeRate;
     uint256 public liquidationFeeRate;
-    uint256 public protocolFeeAccumulator;
     uint256 public minCollateral;
     uint256 public minNotional;
     bool public tradingPaused;
@@ -133,7 +132,7 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         }
 
         _settleNet(msg.sender, totalReturned, totalLost, totalOwed);
-        if (totalFees != 0) protocolFeeAccumulator += totalFees;
+        _payFee(owner(), totalFees);
     }
 
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate)
@@ -143,9 +142,11 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         withPriceUpdate(priceUpdate)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
+        uint256 totalFees;
         for (uint256 i; i < positionIds.length; ++i) {
-            _tryLiquidate(positionIds[i], prices);
+            totalFees += _tryLiquidate(positionIds[i], prices);
         }
+        _payFee(owner(), totalFees);
     }
 
     function getUserOpenPositionIds(address user) external view returns (uint256[] memory) {
@@ -236,15 +237,6 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         Address.sendValue(payable(to), amount);
     }
 
-    function claimProtocolFees() external onlyOwner {
-        uint256 amount = protocolFeeAccumulator;
-        if (amount == 0) return;
-        protocolFeeAccumulator = 0;
-
-        (uint256 paid,) = _settleWin(msg.sender, amount);
-        emit ProtocolFeesClaimed(msg.sender, amount, paid);
-    }
-
     function _settleNet(address trader, uint256 returned, uint256 lost, uint256 owed) internal {
         if (owed > lost) {
             _settleWin(trader, owed - lost);
@@ -283,19 +275,18 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         emit PositionClosed(positionId, p.owner, price, rawPnl, pnl, fee);
     }
 
-    function _tryLiquidate(uint256 positionId, uint256[] memory prices) internal {
+    function _tryLiquidate(uint256 positionId, uint256[] memory prices) internal returns (uint256 fee) {
         Position memory p = positions[positionId];
-        if (!p.isOpen) return;
+        if (!p.isOpen) return 0;
 
         Instrument storage instrument = instruments[p.instrumentId];
         uint256 price = _cachedPrice(prices, p.instrumentId, instrument);
         (bool liquidatable, uint256 liqPrice) = p.isLiquidatable(price, instrument.config.liquidationBuffer);
-        if (!liquidatable) return;
+        if (!liquidatable) return 0;
 
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
-        uint256 fee = (p.collateral * liquidationFeeRate) / WAD;
-        if (fee != 0) protocolFeeAccumulator += fee;
+        fee = (p.collateral * liquidationFeeRate) / WAD;
         traderStats[p.owner].recordLiquidation(p.collateral, fee);
         totalStats.recordLiquidation(p.collateral, fee);
         emit Liquidated(positionId, p.owner, price, liqPrice, fee);

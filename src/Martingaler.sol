@@ -88,6 +88,13 @@ abstract contract Martingaler {
         }
     }
 
+    function _payFee(address recipient, uint256 amount) internal {
+        if (queueLength() == 0 && amount <= treasury) {
+            treasury -= amount;
+            _pay(recipient, amount);
+        }
+    }
+
     function _payFront() internal returns (bool settled) {
         if (queueLength() == 0) return false;
 
