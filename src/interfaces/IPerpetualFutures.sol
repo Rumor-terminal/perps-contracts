@@ -15,8 +15,12 @@ interface IPerpetualFutures {
     event InstrumentRiskUpdated(
         uint32 indexed instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer
     );
-    event InstrumentImpactConfigUpdated(
-        uint32 indexed instrumentId, uint256 impactA, uint256 impactB, uint256 impactC, uint256 profitHaircut
+    event InstrumentHaircutConfigUpdated(
+        uint32 indexed instrumentId,
+        uint256 moveScale,
+        uint256 referenceSize,
+        uint256 marketFactor,
+        uint256 profitHaircut
     );
     event InstrumentOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
     event PositionOpened(
@@ -70,11 +74,11 @@ interface IPerpetualFutures {
     function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer)
         external;
 
-    function setImpactConfig(
+    function setHaircutConfig(
         uint32 instrumentId,
-        uint256 impactA,
-        uint256 impactB,
-        uint256 impactC,
+        uint256 moveScale,
+        uint256 referenceSize,
+        uint256 marketFactor,
         uint256 profitHaircut
     ) external;
 

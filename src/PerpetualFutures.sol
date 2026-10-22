@@ -202,8 +202,8 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
 
         emit InstrumentAdded(instrumentId, config.priceId, symbol);
         emit InstrumentRiskUpdated(instrumentId, config.maxLeverage, config.maxNotional, config.liquidationBuffer);
-        emit InstrumentImpactConfigUpdated(
-            instrumentId, config.impactA, config.impactB, config.impactC, config.profitHaircut
+        emit InstrumentHaircutConfigUpdated(
+            instrumentId, config.moveScale, config.referenceSize, config.marketFactor, config.profitHaircut
         );
     }
 
@@ -215,15 +215,15 @@ contract PerpetualFutures is IPerpetualFutures, Ownable2StepUpgradeable, UUPSUpg
         emit InstrumentRiskUpdated(instrumentId, maxLeverage, maxNotional, liquidationBuffer);
     }
 
-    function setImpactConfig(
+    function setHaircutConfig(
         uint32 instrumentId,
-        uint256 impactA,
-        uint256 impactB,
-        uint256 impactC,
+        uint256 moveScale,
+        uint256 referenceSize,
+        uint256 marketFactor,
         uint256 profitHaircut
     ) external onlyOwner {
-        instruments[instrumentId].setImpactConfig(impactA, impactB, impactC, profitHaircut);
-        emit InstrumentImpactConfigUpdated(instrumentId, impactA, impactB, impactC, profitHaircut);
+        instruments[instrumentId].setHaircutConfig(moveScale, referenceSize, marketFactor, profitHaircut);
+        emit InstrumentHaircutConfigUpdated(instrumentId, moveScale, referenceSize, marketFactor, profitHaircut);
     }
 
     function setOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external onlyOwner {

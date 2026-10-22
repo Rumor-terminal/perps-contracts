@@ -59,9 +59,9 @@ contract Deploy is Script {
             maxLeverage: 1000,
             maxNotional: 1_000_000e18,
             liquidationBuffer: 0.0005e18,
-            impactA: 1e21,
-            impactB: 1e24,
-            impactC: 1e20,
+            moveScale: 1e21,
+            referenceSize: 1e26,
+            marketFactor: 1e24,
             profitHaircut: 0.05e18
         });
     }

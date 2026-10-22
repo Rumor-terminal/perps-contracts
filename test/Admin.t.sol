@@ -38,7 +38,7 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(unauthorized);
         perps.setRiskParams(BTC, 10, 1e18, 0);
         vm.expectRevert(unauthorized);
-        perps.setImpactConfig(BTC, 1, 1, 1, 0);
+        perps.setHaircutConfig(BTC, 1, 1, 1, 0);
         vm.expectRevert(unauthorized);
         perps.setOiCaps(BTC, 0, 0);
         vm.expectRevert(unauthorized);
@@ -73,11 +73,11 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
         perps.setRiskParams(BTC, 1000, 1e24, 1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setImpactConfig(BTC, 0, 1e18, 1e18, 0.1e18);
+        perps.setHaircutConfig(BTC, 0, 1e18, 1e18, 0.1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setImpactConfig(BTC, 1e18, 1e18, 0, 0.1e18);
+        perps.setHaircutConfig(BTC, 1e18, 1e18, 0, 0.1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setImpactConfig(BTC, 1e18, 1e18, 1e18, 1e18);
+        perps.setHaircutConfig(BTC, 1e18, 1e18, 1e18, 1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
         perps.setRiskParams(7, 1000, 1e24, 0.0005e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);

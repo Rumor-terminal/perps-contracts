@@ -74,9 +74,9 @@ abstract contract PerpsTest is Test {
             maxLeverage: 1000,
             maxNotional: 1_000_000e18,
             liquidationBuffer: 0.0005e18,
-            impactA: 15_000e18,
-            impactB: marketFactor,
-            impactC: 0.1e18,
+            moveScale: 15_000e18,
+            referenceSize: 100_000e18,
+            marketFactor: marketFactor,
             profitHaircut: 0.1e18
         });
     }

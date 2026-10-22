@@ -12,9 +12,9 @@ struct Config {
     uint256 maxLeverage;
     uint256 maxNotional;
     uint256 liquidationBuffer;
-    uint256 impactA;
-    uint256 impactB;
-    uint256 impactC;
+    uint256 moveScale;
+    uint256 referenceSize;
+    uint256 marketFactor;
     uint256 profitHaircut;
 }
 
@@ -49,7 +49,7 @@ library InstrumentLib {
 
         self.config.priceId = config.priceId;
         setRiskParams(self, config.maxLeverage, config.maxNotional, config.liquidationBuffer);
-        setImpactConfig(self, config.impactA, config.impactB, config.impactC, config.profitHaircut);
+        setHaircutConfig(self, config.moveScale, config.referenceSize, config.marketFactor, config.profitHaircut);
 
         self.oi.longCap = type(uint128).max;
         self.oi.shortCap = type(uint128).max;
@@ -72,21 +72,21 @@ library InstrumentLib {
         self.config.liquidationBuffer = liquidationBuffer;
     }
 
-    function setImpactConfig(
+    function setHaircutConfig(
         Instrument storage self,
-        uint256 impactA,
-        uint256 impactB,
-        uint256 impactC,
+        uint256 moveScale,
+        uint256 referenceSize,
+        uint256 marketFactor,
         uint256 profitHaircut
     ) internal {
         requireExists(self);
-        if (impactA == 0 || impactC == 0 || profitHaircut >= WAD) {
+        if (moveScale == 0 || marketFactor == 0 || profitHaircut >= WAD) {
             revert InvalidInstrumentConfig();
         }
 
-        self.config.impactA = impactA;
-        self.config.impactB = impactB;
-        self.config.impactC = impactC;
+        self.config.moveScale = moveScale;
+        self.config.referenceSize = referenceSize;
+        self.config.marketFactor = marketFactor;
         self.config.profitHaircut = profitHaircut;
     }
 

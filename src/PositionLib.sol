@@ -23,6 +23,7 @@ library PositionLib {
     error CollateralPrecision();
 
     uint256 internal constant EXIT_SPREAD = 0.00002e18;
+    uint256 internal constant MILLION = 1_000_000;
 
     function validate(Position memory p, uint256 minCollateral, uint256 minNotional, uint256 collateralScale)
         internal
@@ -69,29 +70,23 @@ library PositionLib {
         rawPnl = int256(notional(p)) * priceDelta / int256(entryPrice);
 
         if (rawPnl > 0) {
-            netPnl = applyImpact(
-                rawPnl, entryPrice, exitPrice, config.impactA, config.impactB, config.impactC, config.profitHaircut
-            );
+            netPnl = applyHaircut(rawPnl, entryPrice, exitPrice, config);
         } else {
             int256 maxLoss = -int256(uint256(p.collateral));
             netPnl = rawPnl < maxLoss ? maxLoss : rawPnl;
         }
     }
 
-    function applyImpact(
-        int256 profit,
-        uint256 entryPrice,
-        uint256 exitPrice,
-        uint256 impactA,
-        uint256 impactB,
-        uint256 impactC,
-        uint256 profitHaircut
-    ) internal pure returns (int256) {
-        uint256 move = exitPrice >= entryPrice ? exitPrice - entryPrice : entryPrice - exitPrice;
-        uint256 denominator = _impactDenominator(move * WAD / entryPrice, impactA, impactB, impactC);
-        if (denominator == 0) return 0;
-
-        uint256 factor = (WAD - profitHaircut) * WAD / denominator;
+    function applyHaircut(int256 profit, uint256 entryPrice, uint256 exitPrice, Config storage config)
+        internal
+        view
+        returns (int256)
+    {
+        uint256 move =
+            (exitPrice >= entryPrice ? exitPrice - entryPrice : entryPrice - exitPrice) * WAD / entryPrice;
+        uint256 a = WAD * WAD * WAD / (move * config.moveScale);
+        uint256 b = config.referenceSize * WAD * WAD / (MILLION * move * config.marketFactor);
+        uint256 factor = (WAD - config.profitHaircut) * WAD / (WAD + a + b);
         return profit * int256(factor) / int256(WAD);
     }
 
@@ -103,20 +98,5 @@ library PositionLib {
         uint256 spread = entryPrice * EXIT_SPREAD / WAD;
         if (isLong) return markPrice > entryPrice ? Math.max(markPrice - spread, entryPrice) : markPrice;
         return markPrice < entryPrice ? Math.min(markPrice + spread, entryPrice) : markPrice;
-    }
-
-    function _impactDenominator(uint256 moveWad, uint256 impactA, uint256 impactB, uint256 impactC)
-        private
-        pure
-        returns (uint256)
-    {
-        uint256 a = moveWad * impactA / WAD;
-        uint256 b = moveWad * impactB / WAD;
-        if (a == 0 || b == 0) return 0;
-
-        uint256 inverseB = impactC * WAD / b;
-        if (inverseB > WAD * WAD) return 0;
-
-        return WAD + WAD * WAD / a + inverseB;
     }
 }
