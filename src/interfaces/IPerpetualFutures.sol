@@ -31,9 +31,7 @@ interface IPerpetualFutures {
     event FeeRatesUpdated(uint256 lossFeeRate, uint256 winFeeRate, uint256 liquidationFeeRate);
     event TradeMinimumsUpdated(uint256 minCollateral, uint256 minNotional);
     event InstrumentAdded(uint32 indexed instrumentId, bytes32 priceId, string symbol);
-    event InstrumentRiskUpdated(
-        uint32 indexed instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer
-    );
+    event InstrumentLiquidationBufferUpdated(uint32 indexed instrumentId, uint256 liquidationBuffer);
     event InstrumentHaircutConfigUpdated(
         uint32 indexed instrumentId,
         uint256 moveScale,
@@ -92,8 +90,7 @@ interface IPerpetualFutures {
 
     function addInstrument(Config calldata config, string calldata symbol) external returns (uint32 instrumentId);
 
-    function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer)
-        external;
+    function setLiquidationBuffer(uint32 instrumentId, uint256 liquidationBuffer) external;
 
     function setHaircutConfig(
         uint32 instrumentId,

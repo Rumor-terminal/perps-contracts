@@ -110,7 +110,7 @@ contract PerpetualFutures is
         );
 
         Instrument storage instrument = instruments[request.instrumentId];
-        instrument.validateOpenPosition(request.collateral, request.leverage);
+        instrument.requireExists();
 
         uint256 debited = _debit(trader, request.collateral);
         Position memory p = Position({
@@ -233,18 +233,15 @@ contract PerpetualFutures is
         instruments[instrumentId].init(config);
 
         emit InstrumentAdded(instrumentId, config.priceId, symbol);
-        emit InstrumentRiskUpdated(instrumentId, config.maxLeverage, config.maxNotional, config.liquidationBuffer);
+        emit InstrumentLiquidationBufferUpdated(instrumentId, config.liquidationBuffer);
         emit InstrumentHaircutConfigUpdated(
             instrumentId, config.moveScale, config.referenceSize, config.marketFactor, config.profitHaircut
         );
     }
 
-    function setRiskParams(uint32 instrumentId, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer)
-        external
-        onlyOwner
-    {
-        instruments[instrumentId].setRiskParams(maxLeverage, maxNotional, liquidationBuffer);
-        emit InstrumentRiskUpdated(instrumentId, maxLeverage, maxNotional, liquidationBuffer);
+    function setLiquidationBuffer(uint32 instrumentId, uint256 liquidationBuffer) external onlyOwner {
+        instruments[instrumentId].setLiquidationBuffer(liquidationBuffer);
+        emit InstrumentLiquidationBufferUpdated(instrumentId, liquidationBuffer);
     }
 
     function setHaircutConfig(

@@ -65,22 +65,12 @@ contract TradingTest is PerpsTest {
         open(alice, BTC, true, 1e18, 9);
     }
 
-    function test_LeverageRangesFromOneToOneThousand() public {
+    function test_ZeroLeverageIsRejected() public {
         open(alice, BTC, true, 10e18, 1);
         open(alice, BTC, true, 10e18, 1000);
 
-        vm.expectRevert(InstrumentLib.LeverageTooHigh.selector);
-        open(alice, BTC, true, 10e18, 1001);
-
         vm.expectRevert(PositionLib.ZeroLeverage.selector);
         open(alice, BTC, true, 10e18, 0);
-    }
-
-    function test_MaximumPositionSizeIsOneMillion() public {
-        open(alice, BTC, true, 1_000e18, 1000);
-
-        vm.expectRevert(InstrumentLib.PositionTooLarge.selector);
-        open(alice, BTC, true, 1_000.01e18, 1000);
     }
 
     function test_OnlyListedMarketsCanBeTraded() public {

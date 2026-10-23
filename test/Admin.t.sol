@@ -36,7 +36,7 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(unauthorized);
         perps.addInstrument(launchConfig(keccak256("SOL"), 100e18), "SOL");
         vm.expectRevert(unauthorized);
-        perps.setRiskParams(BTC, 10, 1e18, 0);
+        perps.setLiquidationBuffer(BTC, 0);
         vm.expectRevert(unauthorized);
         perps.setHaircutConfig(BTC, 1, 1, 1, 0);
         vm.expectRevert(unauthorized);
@@ -65,11 +65,7 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
         perps.addInstrument(config, "NONE");
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setRiskParams(BTC, 0, 1e24, 0.0005e18);
-        vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setRiskParams(BTC, 1000, 0, 0.0005e18);
-        vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
-        perps.setRiskParams(BTC, 1000, 1e24, 1e18);
+        perps.setLiquidationBuffer(BTC, 1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
         perps.setHaircutConfig(BTC, 0, 1e18, 1e18, 0.1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
@@ -77,7 +73,7 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(InstrumentLib.InvalidInstrumentConfig.selector);
         perps.setHaircutConfig(BTC, 1e18, 1e18, 1e18, 1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
-        perps.setRiskParams(7, 1000, 1e24, 0.0005e18);
+        perps.setLiquidationBuffer(7, 0.0005e18);
 
         vm.stopPrank();
     }
@@ -158,11 +154,6 @@ contract AdminTest is PerpsTest {
         open(alice, BTC, true, 4e18, 100);
         vm.expectRevert(PositionLib.NotionalBelowMinimum.selector);
         open(alice, BTC, true, 50e18, 1);
-
-        vm.prank(owner);
-        perps.setRiskParams(BTC, 1000, 10_000e18, 0.0005e18);
-        vm.expectRevert(InstrumentLib.PositionTooLarge.selector);
-        open(alice, BTC, true, 100e18, 101);
     }
 
     function test_OwnerUpgradeKeepsPositionsAndQueue() public {

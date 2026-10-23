@@ -9,8 +9,6 @@ uint256 constant WAD = 1e18;
 
 struct Config {
     bytes32 priceId;
-    uint256 maxLeverage;
-    uint256 maxNotional;
     uint256 liquidationBuffer;
     uint256 moveScale;
     uint256 referenceSize;
@@ -27,8 +25,6 @@ library InstrumentLib {
 
     error InvalidInstrumentConfig();
     error InvalidInstrumentId();
-    error LeverageTooHigh();
-    error PositionTooLarge();
     error InvalidPrice();
 
     uint8 internal constant PRICE_DECIMALS = 8;
@@ -39,7 +35,7 @@ library InstrumentLib {
         if (config.priceId == bytes32(0)) revert InvalidInstrumentConfig();
 
         self.config.priceId = config.priceId;
-        setRiskParams(self, config.maxLeverage, config.maxNotional, config.liquidationBuffer);
+        setLiquidationBuffer(self, config.liquidationBuffer);
         setHaircutConfig(self, config.moveScale, config.referenceSize, config.marketFactor, config.profitHaircut);
     }
 
@@ -47,16 +43,10 @@ library InstrumentLib {
         if (self.config.priceId == bytes32(0)) revert InvalidInstrumentId();
     }
 
-    function setRiskParams(Instrument storage self, uint256 maxLeverage, uint256 maxNotional, uint256 liquidationBuffer)
-        internal
-    {
+    function setLiquidationBuffer(Instrument storage self, uint256 liquidationBuffer) internal {
         requireExists(self);
-        if (maxLeverage == 0 || maxNotional == 0 || liquidationBuffer >= WAD) {
-            revert InvalidInstrumentConfig();
-        }
+        if (liquidationBuffer >= WAD) revert InvalidInstrumentConfig();
 
-        self.config.maxLeverage = maxLeverage;
-        self.config.maxNotional = maxNotional;
         self.config.liquidationBuffer = liquidationBuffer;
     }
 
@@ -76,12 +66,6 @@ library InstrumentLib {
         self.config.referenceSize = referenceSize;
         self.config.marketFactor = marketFactor;
         self.config.profitHaircut = profitHaircut;
-    }
-
-    function validateOpenPosition(Instrument storage self, uint256 collateral, uint256 leverage) internal view {
-        requireExists(self);
-        if (leverage > self.config.maxLeverage) revert LeverageTooHigh();
-        if (collateral * leverage > self.config.maxNotional) revert PositionTooLarge();
     }
 
     function price(Instrument storage self, IPyth pyth, uint256 maxPriceAge) internal view returns (uint256) {

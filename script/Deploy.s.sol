@@ -59,8 +59,6 @@ contract Deploy is Script {
     function _instrument(bytes32 priceId, uint256 marketFactor) internal pure returns (Config memory) {
         return Config({
             priceId: priceId,
-            maxLeverage: 1000,
-            maxNotional: 1_000_000e18,
             liquidationBuffer: 0.0005e18,
             moveScale: 15_000e18,
             referenceSize: 100_000e18,
