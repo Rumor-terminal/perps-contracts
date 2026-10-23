@@ -6,7 +6,6 @@ import {PerpsTest} from "./utils/PerpsTest.sol";
 import {PerpsSigner} from "./utils/PerpsSigner.sol";
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
-import {Oi} from "../src/InstrumentLib.sol";
 import {OpenRequest, CloseRequest} from "../src/interfaces/IPerpetualFutures.sol";
 
 contract PerpsHandler is PerpsSigner {
@@ -151,34 +150,15 @@ contract InvariantTest is PerpsTest {
         }
     }
 
-    function invariant_OpenPositionsMatchMarginAndOpenInterest() public view {
+    function invariant_OpenPositionsMatchLockedMargin() public view {
         uint256 locked;
-        uint256[3] memory longs;
-        uint256[3] memory shorts;
         for (uint256 id; id < perps.nextPositionId(); ++id) {
-            (
-                ,
-                uint32 market,
-                uint64 entry,
-                uint128 collateral,
-                uint128 debited,
-                uint32 leverage,,
-                bool isLong,
-                bool isOpen
-            ) = perps.positions(id);
+            (,,, uint128 collateral, uint128 debited,,,, bool isOpen) = perps.positions(id);
             if (!isOpen) continue;
             locked += collateral - debited;
-            uint256 size = uint256(collateral) * leverage * 1e8 / entry;
-            if (isLong) longs[market] += size;
-            else shorts[market] += size;
         }
 
         assertEq(perps.totalLockedMargin(), locked);
-        for (uint32 market; market < 3; ++market) {
-            Oi memory oi = openInterest(market);
-            assertEq(oi.longSize, longs[market]);
-            assertEq(oi.shortSize, shorts[market]);
-        }
     }
 
     function queuedEntriesOf(address user) internal view returns (uint256 total) {

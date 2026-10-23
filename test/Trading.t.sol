@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {PerpsTest} from "./utils/PerpsTest.sol";
-import {InstrumentLib, Oi} from "../src/InstrumentLib.sol";
+import {InstrumentLib} from "../src/InstrumentLib.sol";
 import {Position, PositionLib} from "../src/PositionLib.sol";
 import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
 
@@ -41,8 +41,6 @@ contract TradingTest is PerpsTest {
 
     function test_PositionSizeIsMarginTimesLeverage() public {
         uint256 id = open(alice, BTC, true, 50e18, 100);
-
-        assertEq(openInterest(BTC).longSize, 0.05e18);
 
         (int256 rawPnl, int256 pnl) = perps.previewPnl(id, movedPrice(BTC_PRICE, -50));
         assertEq(rawPnl, -25e18);
@@ -105,10 +103,6 @@ contract TradingTest is PerpsTest {
         assertEq(ids[0], a);
         assertEq(ids[1], b);
         assertEq(ids[2], c);
-
-        Oi memory oi = openInterest(BTC);
-        assertEq(oi.longSize, 0.02e18);
-        assertEq(oi.shortSize, 0.01e18);
     }
 
     function test_LosingCloseReturnsMarginMinusTheLoss() public {
@@ -123,7 +117,6 @@ contract TradingTest is PerpsTest {
         assertEq(perps.totalLockedMargin(), 0);
         assertFalse(position(id).isOpen);
         assertEq(perps.openPositionIds(alice).length, 0);
-        assertEq(openInterest(BTC).longSize, 0);
     }
 
     function test_ShortProfitsWhenPriceFalls() public {

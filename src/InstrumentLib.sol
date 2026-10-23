@@ -18,16 +18,8 @@ struct Config {
     uint256 profitHaircut;
 }
 
-struct Oi {
-    uint128 longSize;
-    uint128 shortSize;
-    uint128 longCap;
-    uint128 shortCap;
-}
-
 struct Instrument {
     Config config;
-    Oi oi;
 }
 
 library InstrumentLib {
@@ -37,7 +29,6 @@ library InstrumentLib {
     error InvalidInstrumentId();
     error LeverageTooHigh();
     error PositionTooLarge();
-    error OiCapExceeded();
     error InvalidPrice();
 
     uint8 internal constant PRICE_DECIMALS = 8;
@@ -50,9 +41,6 @@ library InstrumentLib {
         self.config.priceId = config.priceId;
         setRiskParams(self, config.maxLeverage, config.maxNotional, config.liquidationBuffer);
         setHaircutConfig(self, config.moveScale, config.referenceSize, config.marketFactor, config.profitHaircut);
-
-        self.oi.longCap = type(uint128).max;
-        self.oi.shortCap = type(uint128).max;
     }
 
     function requireExists(Instrument storage self) internal view {
@@ -90,36 +78,10 @@ library InstrumentLib {
         self.config.profitHaircut = profitHaircut;
     }
 
-    function setOiCaps(Instrument storage self, uint128 longCap, uint128 shortCap) internal {
-        requireExists(self);
-
-        self.oi.longCap = longCap;
-        self.oi.shortCap = shortCap;
-    }
-
     function validateOpenPosition(Instrument storage self, uint256 collateral, uint256 leverage) internal view {
         requireExists(self);
         if (leverage > self.config.maxLeverage) revert LeverageTooHigh();
         if (collateral * leverage > self.config.maxNotional) revert PositionTooLarge();
-    }
-
-    function increaseOi(Instrument storage self, bool isLong, uint256 size) internal {
-        Oi storage oi = self.oi;
-
-        if (isLong) {
-            uint256 newLong = oi.longSize + size;
-            if (newLong > oi.longCap) revert OiCapExceeded();
-            oi.longSize = newLong.toUint128();
-        } else {
-            uint256 newShort = oi.shortSize + size;
-            if (newShort > oi.shortCap) revert OiCapExceeded();
-            oi.shortSize = newShort.toUint128();
-        }
-    }
-
-    function decreaseOi(Instrument storage self, bool isLong, uint256 size) internal {
-        if (isLong) self.oi.longSize -= size.toUint128();
-        else self.oi.shortSize -= size.toUint128();
     }
 
     function price(Instrument storage self, IPyth pyth, uint256 maxPriceAge) internal view returns (uint256) {

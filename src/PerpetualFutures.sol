@@ -131,7 +131,6 @@ contract PerpetualFutures is
         openPositionIdsOf[trader].add(positionId);
 
         totalLockedMargin += p.collateral - debited;
-        instrument.increaseOi(p.isLong, p.size());
         traderStats[trader].recordOpen(p.notional());
         totalStats.recordOpen(p.notional());
 
@@ -259,11 +258,6 @@ contract PerpetualFutures is
         emit InstrumentHaircutConfigUpdated(instrumentId, moveScale, referenceSize, marketFactor, profitHaircut);
     }
 
-    function setOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external onlyOwner {
-        instruments[instrumentId].setOiCaps(longCap, shortCap);
-        emit InstrumentOiCapsUpdated(instrumentId, longCap, shortCap);
-    }
-
     receive() external payable {}
 
     function withdrawNative(address to, uint256 amount) external onlyOwner {
@@ -359,11 +353,9 @@ contract PerpetualFutures is
 
     function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {
         cash = p.collateral - p.debited;
-        Instrument storage instrument = instruments[p.instrumentId];
 
         positions[positionId].isOpen = false;
         totalLockedMargin -= cash;
-        instrument.decreaseOi(p.isLong, p.size());
         openPositionIdsOf[p.trader].remove(positionId);
     }
 

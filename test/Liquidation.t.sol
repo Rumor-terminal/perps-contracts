@@ -67,7 +67,6 @@ contract LiquidationTest is PerpsTest {
         assertEq(pool(), 98e18);
         assertEq(perps.totalLockedMargin(), 0);
         assertEq(perps.openPositionIds(alice).length, 0);
-        assertEq(openInterest(BTC).longSize, 0);
     }
 
     function test_LiquidationSends98PercentToPoolAnd2PercentToTreasury() public {

@@ -41,7 +41,6 @@ interface IPerpetualFutures {
         uint256 marketFactor,
         uint256 profitHaircut
     );
-    event InstrumentOiCapsUpdated(uint32 indexed instrumentId, uint128 longCap, uint128 shortCap);
     event PositionOpened(
         uint256 indexed positionId,
         address indexed trader,
@@ -104,5 +103,4 @@ interface IPerpetualFutures {
         uint256 profitHaircut
     ) external;
 
-    function setOiCaps(uint32 instrumentId, uint128 longCap, uint128 shortCap) external;
 }

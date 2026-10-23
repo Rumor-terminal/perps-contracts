@@ -40,8 +40,6 @@ contract AdminTest is PerpsTest {
         vm.expectRevert(unauthorized);
         perps.setHaircutConfig(BTC, 1, 1, 1, 0);
         vm.expectRevert(unauthorized);
-        perps.setOiCaps(BTC, 0, 0);
-        vm.expectRevert(unauthorized);
         perps.withdrawNative(bob, 1);
         vm.expectRevert(unauthorized);
         perps.upgradeToAndCall(implementation, "");
@@ -80,8 +78,6 @@ contract AdminTest is PerpsTest {
         perps.setHaircutConfig(BTC, 1e18, 1e18, 1e18, 1e18);
         vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
         perps.setRiskParams(7, 1000, 1e24, 0.0005e18);
-        vm.expectRevert(InstrumentLib.InvalidInstrumentId.selector);
-        perps.setOiCaps(7, 0, 0);
 
         vm.stopPrank();
     }
@@ -152,23 +148,6 @@ contract AdminTest is PerpsTest {
         setPrice(BTC, int64(-1), -8);
         vm.expectRevert(InstrumentLib.InvalidPrice.selector);
         open(alice, BTC, true, 100e18, 10);
-    }
-
-    function test_SideLimitsCapEachSideAndFreeUpOnClose() public {
-        vm.prank(owner);
-        perps.setOiCaps(BTC, 0.1e18, 0.05e18);
-
-        uint256 first = open(alice, BTC, true, 50e18, 100);
-        open(alice, BTC, true, 50e18, 100);
-        vm.expectRevert(InstrumentLib.OiCapExceeded.selector);
-        open(alice, BTC, true, 1e18, 10);
-
-        open(bob, BTC, false, 50e18, 100);
-        vm.expectRevert(InstrumentLib.OiCapExceeded.selector);
-        open(bob, BTC, false, 1e18, 10);
-
-        close(alice, first);
-        open(alice, BTC, true, 50e18, 100);
     }
 
     function test_LimitsChangeAtOnce() public {

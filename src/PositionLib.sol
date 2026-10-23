@@ -39,10 +39,6 @@ library PositionLib {
         return uint256(p.collateral) * p.leverage;
     }
 
-    function size(Position memory p) internal pure returns (uint256) {
-        return notional(p) * InstrumentLib.PRICE_SCALE / p.entryPrice;
-    }
-
     function liquidationPrice(Position memory p, uint256 buffer) internal pure returns (uint256) {
         uint256 step = uint256(p.entryPrice) / p.leverage;
         uint256 base = p.isLong ? p.entryPrice - step : p.entryPrice + step;

@@ -6,7 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {PerpetualFutures} from "../../src/PerpetualFutures.sol";
 import {MockUSDT} from "../../src/MockUSDT.sol";
 import {OpenRequest, CloseRequest} from "../../src/interfaces/IPerpetualFutures.sol";
-import {Config, Oi} from "../../src/InstrumentLib.sol";
+import {Config} from "../../src/InstrumentLib.sol";
 import {Position} from "../../src/PositionLib.sol";
 import {PerpsSigner} from "./PerpsSigner.sol";
 
@@ -206,10 +206,6 @@ abstract contract PerpsTest is PerpsSigner {
     function position(uint256 id) internal view returns (Position memory p) {
         (p.trader, p.instrumentId, p.entryPrice, p.collateral, p.debited, p.leverage, p.openedAt, p.isLong, p.isOpen) =
             perps.positions(id);
-    }
-
-    function openInterest(uint32 market) internal view returns (Oi memory oi) {
-        (, oi) = perps.instruments(market);
     }
 
     function list(uint256 a) internal pure returns (uint256[] memory ids) {
