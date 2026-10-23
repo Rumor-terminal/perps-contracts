@@ -131,7 +131,7 @@ contract InvariantTest is PerpsTest {
     }
 
     function invariant_TokensCoverPoolAndOpenMargin() public view {
-        assertEq(usdt.balanceOf(address(perps)) * SCALE, perps.treasury() + perps.totalLockedMargin());
+        assertEq(usdt.balanceOf(address(perps)) * SCALE, perps.pool() + perps.totalLockedMargin());
     }
 
     function invariant_QueuedBalancesAddUpToTotalDebt() public view {
@@ -139,7 +139,7 @@ contract InvariantTest is PerpsTest {
         for (uint256 i; i < handler.actorCount(); ++i) {
             sum += queued(handler.actors(i));
         }
-        assertEq(perps.treasuryDebt(), sum);
+        assertEq(perps.poolDebt(), sum);
     }
 
     function invariant_QueueEntriesCoverEveryQueuedBalance() public view {

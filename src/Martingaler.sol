@@ -18,12 +18,12 @@ abstract contract Martingaler {
 
     IERC20 public collateralToken;
     uint256 public collateralScale;
-    uint256 public treasury;
+    uint256 public pool;
     uint256 public queueHead;
     uint256 public queueTail;
-    uint256 public treasuryDebt;
+    uint256 public poolDebt;
     mapping(uint256 => Entry) public queue;
-    mapping(address => uint256) public treasuryDebtOf;
+    mapping(address => uint256) public poolDebtOf;
 
     event Enqueued(address indexed trader, uint256 indexed id, uint256 amount);
     event Debited(address indexed trader, uint256 amount);
@@ -46,13 +46,13 @@ abstract contract Martingaler {
     }
 
     function _debit(address trader, uint256 amount) internal returns (uint256 debited) {
-        uint256 debt = treasuryDebtOf[trader];
+        uint256 debt = poolDebtOf[trader];
         debited = Math.min(debt, amount);
         debited -= debited % collateralScale;
 
         if (debited != 0) {
-            treasuryDebtOf[trader] = debt - debited;
-            treasuryDebt -= debited;
+            poolDebtOf[trader] = debt - debited;
+            poolDebt -= debited;
             emit Debited(trader, debited);
         }
 
@@ -62,35 +62,35 @@ abstract contract Martingaler {
 
     function _pay(address to, uint256 amount) internal {
         uint256 dust = amount % collateralScale;
-        treasury += dust;
+        pool += dust;
         uint256 tokens = (amount - dust) / collateralScale;
         if (tokens != 0) collateralToken.safeTransfer(to, tokens);
     }
 
     function _settleLoss(uint256 amount) internal {
-        treasury += amount;
+        pool += amount;
     }
 
     function _settleWin(address trader, uint256 amount) internal returns (uint256 paid, uint256 queued) {
-        (paid, queued) = queueLength() == 0 ? _splitByTreasury(amount) : (0, amount);
+        (paid, queued) = queueLength() == 0 ? _splitByPool(amount) : (0, amount);
 
         if (paid != 0) {
-            treasury -= paid;
+            pool -= paid;
             _pay(trader, paid);
         }
 
         if (queued != 0) {
             uint256 id = queueTail++;
             queue[id] = Entry(trader, queued);
-            treasuryDebt += queued;
-            treasuryDebtOf[trader] += queued;
+            poolDebt += queued;
+            poolDebtOf[trader] += queued;
             emit Enqueued(trader, id, queued);
         }
     }
 
     function _payFee(address recipient, uint256 amount) internal {
-        if (queueLength() == 0 && amount <= treasury) {
-            treasury -= amount;
+        if (queueLength() == 0 && amount <= pool) {
+            pool -= amount;
             _pay(recipient, amount);
         }
     }
@@ -100,15 +100,15 @@ abstract contract Martingaler {
 
         uint256 id = queueHead;
         Entry storage e = queue[id];
-        uint256 remainingDebt = treasuryDebtOf[e.trader];
+        uint256 remainingDebt = poolDebtOf[e.trader];
         uint256 payableFromEntry = Math.min(e.amount, remainingDebt);
-        (uint256 paid, uint256 remaining) = _splitByTreasury(payableFromEntry);
+        (uint256 paid, uint256 remaining) = _splitByPool(payableFromEntry);
         if (paid == 0 && remaining != 0) return false;
 
         if (paid != 0) {
-            treasury -= paid;
-            treasuryDebt -= paid;
-            treasuryDebtOf[e.trader] = remainingDebt - paid;
+            pool -= paid;
+            poolDebt -= paid;
+            poolDebtOf[e.trader] = remainingDebt - paid;
             _pay(e.trader, paid);
         }
         emit QueuePaid(e.trader, id, paid, remaining);
@@ -122,8 +122,8 @@ abstract contract Martingaler {
         }
     }
 
-    function _splitByTreasury(uint256 amount) private view returns (uint256 covered, uint256 remaining) {
-        covered = Math.min(amount, treasury);
+    function _splitByPool(uint256 amount) private view returns (uint256 covered, uint256 remaining) {
+        covered = Math.min(amount, pool);
         remaining = amount - covered;
     }
 }

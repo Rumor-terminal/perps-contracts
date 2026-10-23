@@ -196,11 +196,11 @@ abstract contract PerpsTest is PerpsSigner {
     }
 
     function pool() internal view returns (uint256) {
-        return perps.treasury();
+        return perps.pool();
     }
 
     function queued(address trader) internal view returns (uint256) {
-        return perps.treasuryDebtOf(trader);
+        return perps.poolDebtOf(trader);
     }
 
     function position(uint256 id) internal view returns (Position memory p) {

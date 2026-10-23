@@ -8,7 +8,7 @@ contract PoolQueueTest is PerpsTest {
     function test_PoolStartsAtZero() public view {
         assertEq(pool(), 0);
         assertEq(perps.queueLength(), 0);
-        assertEq(perps.treasuryDebt(), 0);
+        assertEq(perps.poolDebt(), 0);
     }
 
     function test_NobodyCanPutMoneyIntoThePool() public {
@@ -33,7 +33,7 @@ contract PoolQueueTest is PerpsTest {
 
         assertEq(wallet(alice), before);
         assertEq(queued(alice), owed);
-        assertEq(perps.treasuryDebt(), owed);
+        assertEq(perps.poolDebt(), owed);
         assertEq(perps.queueLength(), 1);
         (address user, uint256 amount) = perps.queue(0);
         assertEq(user, alice);
@@ -115,7 +115,7 @@ contract PoolQueueTest is PerpsTest {
 
         assertEq(queued(alice), 0);
         assertEq(queued(bob), 0);
-        assertEq(perps.treasuryDebt(), 0);
+        assertEq(perps.poolDebt(), 0);
     }
 
     function test_HarvestPaysFromTheFrontOnly() public {
@@ -162,7 +162,7 @@ contract PoolQueueTest is PerpsTest {
 
         assertEq(wallet(alice), before);
         assertEq(queued(alice), owed - 100e18);
-        assertEq(perps.treasuryDebt(), owed - 100e18);
+        assertEq(perps.poolDebt(), owed - 100e18);
         assertEq(position(id).debited, 100e18);
         assertEq(perps.totalLockedMargin(), 0);
     }
