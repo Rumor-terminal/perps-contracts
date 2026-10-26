@@ -14,7 +14,6 @@ import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Martingaler} from "./Martingaler.sol";
 import {Position, PositionLib} from "./PositionLib.sol";
 import {Config, Instrument, InstrumentLib, WAD} from "./InstrumentLib.sol";
-import {TraderStats, TraderStatsLib} from "./TraderStatsLib.sol";
 import {IPerpetualFutures, OpenRequest, CloseRequest} from "./interfaces/IPerpetualFutures.sol";
 
 struct Settlement {
@@ -36,13 +35,16 @@ contract PerpetualFutures is
     using EnumerableSet for EnumerableSet.UintSet;
     using PositionLib for Position;
     using InstrumentLib for Instrument;
-    using TraderStatsLib for TraderStats;
 
     bytes32 public constant OPEN_POSITION_TYPEHASH = keccak256(
         "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline)"
     );
     bytes32 public constant CLOSE_POSITIONS_TYPEHASH =
         keccak256("ClosePositions(address trader,uint256[] positionIds,uint256 nonce,uint256 deadline)");
+    uint256 public constant FULL_SHARDS_RATE = 100e18;
+    uint256 public constant FULL_RATE_POOL = 500_000e18;
+    uint256 public constant FULL_RATE_LOSSES = 500_000e18;
+    uint256 public constant SHARDS_DECAY_SCALE = 20_000_000e18;
 
     IPyth public pyth;
 
@@ -59,8 +61,9 @@ contract PerpetualFutures is
     uint256 public minCollateral;
     uint256 public minNotional;
     mapping(address => bool) public isExecutor;
-    mapping(address => TraderStats) public traderStats;
-    TraderStats public totalStats;
+    uint256 public totalLosses;
+    uint256 public totalShards;
+    mapping(address => uint256) public shardsOf;
 
     constructor() {
         _disableInitializers();
@@ -131,8 +134,6 @@ contract PerpetualFutures is
         openPositionIdsOf[trader].add(positionId);
 
         totalLockedMargin += p.collateral - debited;
-        traderStats[trader].recordOpen(p.notional());
-        totalStats.recordOpen(p.notional());
 
         emit PositionOpened(positionId, trader, p.instrumentId, p.isLong, p.entryPrice, p.collateral, p.leverage);
     }
@@ -174,9 +175,10 @@ contract PerpetualFutures is
         withPriceUpdate(priceUpdate)
     {
         uint256[] memory prices = new uint256[](instrumentCount);
+        uint256 shardsRate = getShardsRate();
         uint256 totalFees;
         for (uint256 i; i < positionIds.length; ++i) {
-            totalFees += _tryLiquidate(positionIds[i], prices);
+            totalFees += _tryLiquidate(positionIds[i], prices, shardsRate);
         }
         _payFee(owner(), totalFees);
     }
@@ -193,6 +195,12 @@ contract PerpetualFutures is
     function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl) {
         Position memory p = positions[positionId];
         return p.pnl(markPrice, instruments[p.instrumentId].config);
+    }
+
+    function getShardsRate() public view returns (uint256) {
+        if (pool < FULL_RATE_POOL || totalLosses <= FULL_RATE_LOSSES) return FULL_SHARDS_RATE;
+        uint256 scaled = SHARDS_DECAY_SCALE + totalLosses - FULL_RATE_LOSSES;
+        return FULL_SHARDS_RATE * SHARDS_DECAY_SCALE / scaled * SHARDS_DECAY_SCALE / scaled;
     }
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256) {
@@ -277,9 +285,11 @@ contract PerpetualFutures is
 
     function _closePositions(address trader, uint256[] calldata positionIds) internal {
         uint256[] memory prices = new uint256[](instrumentCount);
+        uint256 shardsRate = getShardsRate();
         Settlement memory total;
+        Settlement memory s;
         for (uint256 i; i < positionIds.length; ++i) {
-            Settlement memory s = _tryClose(positionIds[i], trader, prices);
+            s = _tryClose(positionIds[i], trader, prices, shardsRate);
             total.returned += s.returned;
             total.owed += s.owed;
             total.lost += s.lost;
@@ -301,7 +311,7 @@ contract PerpetualFutures is
         if (direct != 0) _pay(trader, direct);
     }
 
-    function _tryClose(uint256 positionId, address trader, uint256[] memory prices)
+    function _tryClose(uint256 positionId, address trader, uint256[] memory prices, uint256 shardsRate)
         internal
         returns (Settlement memory s)
     {
@@ -313,6 +323,7 @@ contract PerpetualFutures is
         uint256 cash = _release(positionId, p);
 
         (int256 rawPnl, int256 pnl) = p.pnl(price, instrument.config);
+        uint256 shards;
         if (pnl > 0) {
             uint256 profit = uint256(pnl);
             s.fee = (profit * winFeeRate) / WAD;
@@ -325,13 +336,15 @@ contract PerpetualFutures is
             s.lost = loss - lossFromDebit;
             s.returned = cash - s.lost;
             s.owed = p.debited - lossFromDebit;
+            shards = _creditShards(p.trader, loss, queueLength() == 0 ? loss - s.fee : loss, shardsRate);
         }
-        traderStats[p.trader].recordClose(pnl, s.fee);
-        totalStats.recordClose(pnl, s.fee);
-        emit PositionClosed(positionId, p.trader, price, rawPnl, pnl, s.fee);
+        emit PositionClosed(positionId, p.trader, price, rawPnl, pnl, s.fee, shards, shardsRate);
     }
 
-    function _tryLiquidate(uint256 positionId, uint256[] memory prices) internal returns (uint256 fee) {
+    function _tryLiquidate(uint256 positionId, uint256[] memory prices, uint256 shardsRate)
+        internal
+        returns (uint256 fee)
+    {
         Position memory p = positions[positionId];
         if (!p.isOpen) return 0;
 
@@ -343,9 +356,18 @@ contract PerpetualFutures is
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
         fee = (p.collateral * liquidationFeeRate) / WAD;
-        traderStats[p.trader].recordLiquidation(p.collateral, fee);
-        totalStats.recordLiquidation(p.collateral, fee);
-        emit Liquidated(positionId, p.trader, price, liqPrice, fee);
+        uint256 shards = _creditShards(p.trader, p.collateral, p.collateral, shardsRate);
+        emit Liquidated(positionId, p.trader, price, liqPrice, fee, shards, shardsRate);
+    }
+
+    function _creditShards(address trader, uint256 loss, uint256 basis, uint256 shardsRate)
+        internal
+        returns (uint256 shards)
+    {
+        shards = (basis * shardsRate) / WAD;
+        totalLosses += loss;
+        totalShards += shards;
+        shardsOf[trader] += shards;
     }
 
     function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {

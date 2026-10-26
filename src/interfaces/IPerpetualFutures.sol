@@ -49,10 +49,23 @@ interface IPerpetualFutures {
         uint32 leverage
     );
     event PositionClosed(
-        uint256 indexed positionId, address indexed trader, uint256 markPrice, int256 rawPnl, int256 pnl, uint256 fees
+        uint256 indexed positionId,
+        address indexed trader,
+        uint256 markPrice,
+        int256 rawPnl,
+        int256 pnl,
+        uint256 fees,
+        uint256 shards,
+        uint256 shardsRate
     );
     event Liquidated(
-        uint256 indexed positionId, address indexed trader, uint256 price, uint256 liquidationPrice, uint256 fee
+        uint256 indexed positionId,
+        address indexed trader,
+        uint256 price,
+        uint256 liquidationPrice,
+        uint256 fee,
+        uint256 shards,
+        uint256 shardsRate
     );
 
     function openPosition(OpenRequest calldata request, bytes calldata signature, bytes[] calldata priceUpdate)
@@ -78,6 +91,8 @@ interface IPerpetualFutures {
 
     function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl);
 
+    function getShardsRate() external view returns (uint256);
+
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256);
 
     function setMaxPriceAge(uint256 maxPriceAge_) external;
@@ -99,5 +114,4 @@ interface IPerpetualFutures {
         uint256 marketFactor,
         uint256 profitHaircut
     ) external;
-
 }
