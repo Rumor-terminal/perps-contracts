@@ -116,7 +116,7 @@ contract SignaturesTest is PerpsTest {
         uint256 before = wallet(alice);
 
         vm.expectEmit(address(perps));
-        emit IPerpetualFutures.PositionClosed(id, alice, BTC_PRICE, 0, 0, 0);
+        emit IPerpetualFutures.PositionClosed(id, alice, BTC_PRICE, 0, 0, 0, 0, 100e18);
         closeWithSig(alice, list(id));
 
         assertFalse(position(id).isOpen);

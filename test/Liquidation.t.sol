@@ -60,7 +60,7 @@ contract LiquidationTest is PerpsTest {
         uint256 before = wallet(alice);
 
         vm.expectEmit(address(perps));
-        emit IPerpetualFutures.Liquidated(id, alice, liq, liq, 2e18);
+        emit IPerpetualFutures.Liquidated(id, alice, liq, liq, 2e18, 10_000e18, 100e18);
         liquidate(id);
 
         assertEq(wallet(alice), before);
@@ -128,18 +128,13 @@ contract LiquidationTest is PerpsTest {
         assertEq(pool(), 98e18);
     }
 
-    function test_LiquidationCountsTheFullMarginAsLoss() public {
+    function test_LiquidationCreditsShardsOnTheFullMargin() public {
         uint256 id = open(alice, BTC, true, 100e18, 1000);
         setPrice(BTC, perps.liquidationPrice(id));
         liquidate(id);
 
-        (,,, uint128 liquidated, uint128 fees,, uint32 liquidations) = perps.traderStats(alice);
-        assertEq(liquidated, 100e18);
-        assertEq(fees, 2e18);
-        assertEq(liquidations, 1);
-
-        (,,, uint128 totalLiquidated,,, uint32 totalLiquidations) = perps.totalStats();
-        assertEq(totalLiquidated, 100e18);
-        assertEq(totalLiquidations, 1);
+        assertEq(perps.totalLosses(), 100e18);
+        assertEq(perps.shardsOf(alice), 10_000e18);
+        assertEq(perps.totalShards(), 10_000e18);
     }
 }

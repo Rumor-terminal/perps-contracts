@@ -129,7 +129,7 @@ contract TradingTest is PerpsTest {
         setPrice(BTC, mark);
 
         vm.expectEmit(address(perps));
-        emit IPerpetualFutures.PositionClosed(id, alice, mark, -30e18, -30e18, 0.6e18);
+        emit IPerpetualFutures.PositionClosed(id, alice, mark, -30e18, -30e18, 0.6e18, 2_940e18, 100e18);
         close(alice, id);
     }
 
@@ -201,18 +201,13 @@ contract TradingTest is PerpsTest {
         assertEq(perps.totalLockedMargin(), 0);
     }
 
-    function test_StatsRecordVolumeAndRealizedLoss() public {
+    function test_LosingCloseCreditsShardsOnTheLossAfterFee() public {
         uint256 id = open(alice, BTC, true, 100e18, 10);
         setPrice(BTC, movedPrice(BTC_PRICE, -300));
         close(alice, id);
 
-        (uint128 volume,, uint128 loss,,, uint32 positions,) = perps.traderStats(alice);
-        assertEq(volume, 1_000e18);
-        assertEq(loss, 30e18);
-        assertEq(positions, 1);
-
-        (uint128 totalVolume,, uint128 totalLoss,,,,) = perps.totalStats();
-        assertEq(totalVolume, 1_000e18);
-        assertEq(totalLoss, 30e18);
+        assertEq(perps.totalLosses(), 30e18);
+        assertEq(perps.shardsOf(alice), 2_940e18);
+        assertEq(perps.totalShards(), 2_940e18);
     }
 }
