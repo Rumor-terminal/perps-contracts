@@ -7,6 +7,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {PerpetualFutures} from "../src/PerpetualFutures.sol";
 import {Config} from "../src/InstrumentLib.sol";
 import {MockUSDT} from "../src/MockUSDT.sol";
+import {MulticallExecutor} from "../src/MulticallExecutor.sol";
 
 contract Deploy is Script {
     bytes32 constant BTC_USD = 0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43;
@@ -31,7 +32,9 @@ contract Deploy is Script {
                     implementation, abi.encodeCall(PerpetualFutures.initialize, (deployer, pyth, usdt))
                 ))
         );
+        address multicall = address(new MulticallExecutor(perps));
         perps.setExecutor(executor, true);
+        perps.setExecutor(multicall, true);
         perps.setTradeMinimums(1e18, 10e18);
         perps.setMaxPriceAge(isLocal ? 3600 : 5);
         perps.addInstrument(_instrument(BTC_USD, 814.598e18), "BTC");
@@ -44,6 +47,7 @@ contract Deploy is Script {
         vm.serializeAddress(json, "exchange", address(perps));
         vm.serializeAddress(json, "implementation", implementation);
         vm.serializeAddress(json, "executor", executor);
+        vm.serializeAddress(json, "multicall", multicall);
         vm.serializeAddress(json, "pyth", pyth);
         vm.serializeAddress(json, "usdt", usdt);
         vm.serializeUint(json, "startBlock", block.number);
@@ -52,6 +56,7 @@ contract Deploy is Script {
         console.log("exchange", address(perps));
         console.log("implementation", implementation);
         console.log("executor", executor);
+        console.log("multicall", multicall);
         console.log("pyth", pyth);
         console.log("usdt", usdt);
     }

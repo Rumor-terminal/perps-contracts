@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
+import {IPyth} from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
 import {Config} from "../InstrumentLib.sol";
 
 struct OpenRequest {
@@ -84,6 +85,10 @@ interface IPerpetualFutures {
     function liquidateBatch(uint256[] calldata positionIds, bytes[] calldata priceUpdate) external payable;
 
     function withdrawNative(address to, uint256 amount) external;
+
+    function pyth() external view returns (IPyth);
+
+    function isExecutor(address executor) external view returns (bool);
 
     function openPositionIds(address trader) external view returns (uint256[] memory);
 
