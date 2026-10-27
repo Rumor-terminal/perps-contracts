@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
@@ -26,7 +26,7 @@ struct Settlement {
 
 contract PerpetualFutures is
     IPerpetualFutures,
-    Ownable2StepUpgradeable,
+    OwnableUpgradeable,
     UUPSUpgradeable,
     EIP712Upgradeable,
     NoncesKeyedUpgradeable,
@@ -72,7 +72,6 @@ contract PerpetualFutures is
 
     function initialize(address owner_, address pyth_, address collateral_) external initializer {
         __Ownable_init(owner_);
-        __Ownable2Step_init();
         __EIP712_init("PerpetualFutures", "1");
 
         pyth = IPyth(pyth_);
