@@ -5,6 +5,7 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {NoncesKeyedUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/NoncesKeyedUpgradeable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -278,9 +279,13 @@ contract PerpetualFutures is
     ) internal {
         if (block.timestamp > deadline) revert SignatureExpired();
         _useCheckedNonce(trader, nonce);
-        if (!SignatureChecker.isValidSignatureNow(trader, _hashTypedDataV4(structHash), signature)) {
-            revert InvalidSignature();
-        }
+        if (!_isValidSignature(trader, _hashTypedDataV4(structHash), signature)) revert InvalidSignature();
+    }
+
+    function _isValidSignature(address trader, bytes32 digest, bytes calldata signature) internal view returns (bool) {
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecoverCalldata(digest, signature);
+        if (err == ECDSA.RecoverError.NoError && recovered == trader) return true;
+        return SignatureChecker.isValidERC1271SignatureNowCalldata(trader, digest, signature);
     }
 
     function _closePositions(address trader, uint256[] calldata positionIds) internal {
