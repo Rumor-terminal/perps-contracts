@@ -1,66 +1,61 @@
-## Foundry
+# Blueprint by Rumor
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+On-chain perpetual futures exchange with USDT margin and Pyth oracle pricing, deployed on BNB Smart Chain.
 
-Foundry consists of:
+## Technology Stack
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- Blockchain: BNB Smart Chain (BSC)
+- Smart Contracts: Solidity 0.8.28, OpenZeppelin 5 (UUPS upgradeable proxy, EIP-712), Pyth pull oracle
+- Frontend: Next.js, viem / wagmi (separate repository)
+- Development: Foundry (forge, anvil), Envio indexer
 
-## Documentation
+## Supported Networks
 
-https://book.getfoundry.sh/
+- BNB Smart Chain Mainnet (Chain ID: 56)
+- BNB Smart Chain Testnet (Chain ID: 97)
+- Anvil local (Chain ID: 31337)
+
+## Contract Addresses
+
+| Network | Core Contract (PerpetualFutures proxy) | Token Contract (USDT collateral) | Optional Contract (MulticallExecutor) |
+|---------|----------------------------------------|----------------------------------|----------------------------------------|
+| BNB Smart Chain Mainnet (56) | [0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1](https://bscscan.com/address/0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1) | [0x55d398326f99059fF775485246999027B3197955](https://bscscan.com/address/0x55d398326f99059fF775485246999027B3197955) | [0xd1b6fDeF4972ED0bf92483b2041573830EED0ad5](https://bscscan.com/address/0xd1b6fDeF4972ED0bf92483b2041573830EED0ad5) |
+
+Implementation behind the proxy: [0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F](https://bscscan.com/address/0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F). Pyth on BSC: `0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594`. Per-chain addresses live in [`deployments/`](deployments/) and are written by the deploy script.
+
+## Features
+
+- Perpetual positions on BTC, ETH and BNB with USDT as the only collateral
+- Pyth price updates bundled into every open, close and liquidation transaction
+- Gasless trading: traders sign EIP-712 orders, an executor submits them (`openPosition`, `closePositionsWithSig`)
+- Batch liquidations with a liquidation buffer per instrument (`liquidateBatch`)
+- Pool-backed payouts: wins are paid from the pool or queued and settled by `harvest` as losses come in
+- UUPS upgradeable core with owner-managed instruments, fee rates and executors
+
+## Layout
+
+- `src/PerpetualFutures.sol` — exchange core (positions, pricing, fees, liquidation)
+- `src/Martingaler.sol` — pool accounting and the payout queue
+- `src/MulticallExecutor.sol` — batches executor calls into one transaction
+- `src/InstrumentLib.sol`, `src/PositionLib.sol` — instrument config and position math
+- `script/Deploy.s.sol`, `script/Upgrade.s.sol`, `script/DeployMulticall.s.sol` — deployment, writes `deployments/<chainId>.json`
+- `test/` — unit, fuzz and invariant tests
 
 ## Usage
 
-### Build
-
 ```shell
-$ forge build
+npm install
+forge build
+forge test
 ```
 
-### Test
+Deploy to BSC: copy `.env.example` to `.env`, fill `RPC_URL`, `PRIVATE_KEY`, `PYTH_ADDRESS`, `USDT_ADDRESS`, then:
 
 ```shell
-$ forge test
+npm run deploy:bsc
+npm run verify:bsc
 ```
 
-### Format
+Local stand: `anvil --chain-id 31337`, then `npm run deploy:local` deploys MockPyth and MockUSDT.
 
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+---

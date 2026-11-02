@@ -52,7 +52,7 @@ contract Deploy is Script {
         vm.serializeAddress(json, "usdt", usdt);
         vm.serializeUint(json, "startBlock", block.number);
         string memory out = vm.serializeBool(json, "mockPyth", isLocal);
-        vm.writeJson(out, string.concat("../deployments/", vm.toString(block.chainid), ".json"));
+        vm.writeJson(out, string.concat("deployments/", vm.toString(block.chainid), ".json"));
         console.log("exchange", address(perps));
         console.log("implementation", implementation);
         console.log("executor", executor);

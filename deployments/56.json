@@ -1,0 +1,11 @@
+{
+  "chainId": 56,
+  "exchange": "0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1",
+  "executor": "0x676f67c4C2815048E59bf5400927F8e2d875953e",
+  "implementation": "0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F",
+  "mockPyth": false,
+  "pyth": "0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594",
+  "startBlock": 129914991,
+  "usdt": "0x55d398326f99059fF775485246999027B3197955",
+  "multicall": "0xd1b6fDeF4972ED0bf92483b2041573830EED0ad5"
+}

@@ -7,7 +7,7 @@ import {MulticallExecutor} from "../src/MulticallExecutor.sol";
 
 contract DeployMulticall is Script {
     function run() external {
-        string memory path = string.concat("../deployments/", vm.toString(block.chainid), ".json");
+        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         PerpetualFutures perps = PerpetualFutures(payable(vm.parseJsonAddress(vm.readFile(path), ".exchange")));
 
         vm.startBroadcast();

@@ -12,7 +12,16 @@ remappings = [
   "@openzeppelin/=node_modules/@openzeppelin/",
   "@pythnetwork/=node_modules/@pythnetwork/"
 ]
-fs_permissions = [{ access = "read-write", path = "../deployments" }]
+fs_permissions = [{ access = "read-write", path = "deployments" }]
+
+[rpc_endpoints]
+local = "http://127.0.0.1:8545"
+bsc = "https://bsc-dataseed.bnbchain.org"
+bsc_testnet = "https://bsc-testnet-dataseed.bnbchain.org"
+
+[etherscan]
+bsc = { key = "${BSCSCAN_API_KEY}", chain = 56 }
+bsc_testnet = { key = "${BSCSCAN_API_KEY}", chain = 97 }
 
 [fuzz]
 runs = 512
