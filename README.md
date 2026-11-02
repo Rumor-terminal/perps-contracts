@@ -64,4 +64,8 @@ npm run verify:bsc
 
 Local stand: `anvil --chain-id 31337`, then `npm run deploy:local` deploys MockPyth and MockUSDT.
 
+## License
+
+[MIT](LICENSE)
+
 ---
