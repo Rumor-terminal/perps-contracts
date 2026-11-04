@@ -9,7 +9,7 @@ abstract contract PerpsSigner is Test {
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 internal constant OPEN_TYPEHASH = keccak256(
-        "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline)"
+        "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline,address ref)"
     );
     bytes32 internal constant CLOSE_TYPEHASH =
         keccak256("ClosePositions(address trader,uint256[] positionIds,uint256 nonce,uint256 deadline)");
@@ -31,6 +31,13 @@ abstract contract PerpsSigner is Test {
         internal
         returns (OpenRequest memory)
     {
+        return openRequest(trader, market, isLong, margin, leverage, address(0));
+    }
+
+    function openRequest(address trader, uint32 market, bool isLong, uint256 margin, uint256 leverage, address ref)
+        internal
+        returns (OpenRequest memory)
+    {
         return OpenRequest({
             trader: trader,
             instrumentId: market,
@@ -38,7 +45,8 @@ abstract contract PerpsSigner is Test {
             collateral: uint128(margin),
             leverage: uint32(leverage),
             nonce: freshNonce(),
-            deadline: block.timestamp
+            deadline: block.timestamp,
+            ref: ref
         });
     }
 
@@ -52,7 +60,15 @@ abstract contract PerpsSigner is Test {
             key,
             keccak256(
                 abi.encode(
-                    OPEN_TYPEHASH, r.trader, r.instrumentId, r.isLong, r.collateral, r.leverage, r.nonce, r.deadline
+                    OPEN_TYPEHASH,
+                    r.trader,
+                    r.instrumentId,
+                    r.isLong,
+                    r.collateral,
+                    r.leverage,
+                    r.nonce,
+                    r.deadline,
+                    r.ref
                 )
             )
         );

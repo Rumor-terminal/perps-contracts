@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {PerpsTest} from "./utils/PerpsTest.sol";
+import {IPerpetualFutures} from "../src/interfaces/IPerpetualFutures.sol";
 
 contract FeesTest is PerpsTest {
     function test_LosingCloseSends98PercentToPoolAnd2PercentToTreasury() public {
@@ -77,6 +78,29 @@ contract FeesTest is PerpsTest {
 
         assertEq(wallet(owner), 0);
         assertEq(queued(alice), owed - 100e18);
+    }
+
+    function test_LosingCloseWhileQueueIsActiveReportsNoFee() public {
+        winBtc(alice);
+        uint256 price = currentPrice(BNB);
+        uint256 id = open(bob, BNB, false, 100e18, 10);
+        setPrice(BNB, price * 11 / 10);
+        (, int256 pnl) = perps.previewPnl(id, price * 11 / 10);
+
+        vm.expectEmit(address(perps));
+        emit IPerpetualFutures.PositionClosed(id, bob, price * 11 / 10, pnl, pnl, 0, uint256(-pnl) * 100, 100e18);
+        close(bob, id);
+    }
+
+    function test_LiquidationWhileQueueIsActiveReportsNoFee() public {
+        winBtc(alice);
+        uint256 id = open(bob, BTC, true, 100e18, 100);
+        uint256 liq = perps.liquidationPrice(id);
+        setPrice(BTC, liq);
+
+        vm.expectEmit(address(perps));
+        emit IPerpetualFutures.Liquidated(id, bob, liq, liq, 0, 10_000e18, 100e18);
+        liquidate(id);
     }
 
     function test_LiquidationWhileQueueIsActivePaysNoFee() public {

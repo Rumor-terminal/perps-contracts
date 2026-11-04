@@ -38,7 +38,7 @@ contract PerpetualFutures is
     using InstrumentLib for Instrument;
 
     bytes32 public constant OPEN_POSITION_TYPEHASH = keccak256(
-        "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline)"
+        "OpenPosition(address trader,uint32 instrumentId,bool isLong,uint128 collateral,uint32 leverage,uint256 nonce,uint256 deadline,address ref)"
     );
     bytes32 public constant CLOSE_POSITIONS_TYPEHASH =
         keccak256("ClosePositions(address trader,uint256[] positionIds,uint256 nonce,uint256 deadline)");
@@ -46,6 +46,7 @@ contract PerpetualFutures is
     uint256 public constant FULL_RATE_POOL = 500_000e18;
     uint256 public constant FULL_RATE_LOSSES = 500_000e18;
     uint256 public constant SHARDS_DECAY_SCALE = 20_000_000e18;
+    uint256 public constant REFERRAL_SHARDS_RATE = 0.15e18;
 
     IPyth public pyth;
 
@@ -65,6 +66,8 @@ contract PerpetualFutures is
     uint256 public totalLosses;
     uint256 public totalShards;
     mapping(address => uint256) public shardsOf;
+    mapping(address => address) public referrerOf;
+    mapping(address => bool) public hasTraded;
 
     constructor() {
         _disableInitializers();
@@ -108,9 +111,15 @@ contract PerpetualFutures is
         returns (uint256 positionId)
     {
         address trader = request.trader;
+        address ref = request.ref;
         _verifySignature(
             trader, keccak256(abi.encode(OPEN_POSITION_TYPEHASH, request)), request.nonce, request.deadline, signature
         );
+        if (ref != address(0) && ref != trader && !hasTraded[trader]) {
+            referrerOf[trader] = ref;
+            emit ReferrerSet(trader, ref);
+        }
+        hasTraded[trader] = true;
 
         Instrument storage instrument = instruments[request.instrumentId];
         instrument.requireExists();
@@ -176,9 +185,10 @@ contract PerpetualFutures is
     {
         uint256[] memory prices = new uint256[](instrumentCount);
         uint256 shardsRate = getShardsRate();
+        bool feePayable = queueLength() == 0;
         uint256 totalFees;
         for (uint256 i; i < positionIds.length; ++i) {
-            totalFees += _tryLiquidate(positionIds[i], prices, shardsRate);
+            totalFees += _tryLiquidate(positionIds[i], prices, shardsRate, feePayable);
         }
         _payFee(owner(), totalFees);
     }
@@ -198,9 +208,11 @@ contract PerpetualFutures is
     }
 
     function getShardsRate() public view returns (uint256) {
-        if (pool < FULL_RATE_POOL || totalLosses <= FULL_RATE_LOSSES) return FULL_SHARDS_RATE;
+        if (pool < FULL_RATE_POOL || totalLosses <= FULL_RATE_LOSSES) {
+            return FULL_SHARDS_RATE;
+        }
         uint256 scaled = SHARDS_DECAY_SCALE + totalLosses - FULL_RATE_LOSSES;
-        return FULL_SHARDS_RATE * SHARDS_DECAY_SCALE / scaled * SHARDS_DECAY_SCALE / scaled;
+        return (((FULL_SHARDS_RATE * SHARDS_DECAY_SCALE) / scaled) * SHARDS_DECAY_SCALE) / scaled;
     }
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256) {
@@ -278,22 +290,27 @@ contract PerpetualFutures is
     ) internal {
         if (block.timestamp > deadline) revert SignatureExpired();
         _useCheckedNonce(trader, nonce);
-        if (!_isValidSignature(trader, _hashTypedDataV4(structHash), signature)) revert InvalidSignature();
+        if (!_isValidSignature(trader, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSignature();
+        }
     }
 
     function _isValidSignature(address trader, bytes32 digest, bytes calldata signature) internal view returns (bool) {
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecoverCalldata(digest, signature);
-        if (err == ECDSA.RecoverError.NoError && recovered == trader) return true;
+        if (err == ECDSA.RecoverError.NoError && recovered == trader) {
+            return true;
+        }
         return SignatureChecker.isValidERC1271SignatureNowCalldata(trader, digest, signature);
     }
 
     function _closePositions(address trader, uint256[] calldata positionIds) internal {
         uint256[] memory prices = new uint256[](instrumentCount);
         uint256 shardsRate = getShardsRate();
+        bool feePayable = queueLength() == 0;
         Settlement memory total;
         Settlement memory s;
         for (uint256 i; i < positionIds.length; ++i) {
-            s = _tryClose(positionIds[i], trader, prices, shardsRate);
+            s = _tryClose(positionIds[i], trader, prices, shardsRate, feePayable);
             total.returned += s.returned;
             total.owed += s.owed;
             total.lost += s.lost;
@@ -315,7 +332,7 @@ contract PerpetualFutures is
         if (direct != 0) _pay(trader, direct);
     }
 
-    function _tryClose(uint256 positionId, address trader, uint256[] memory prices, uint256 shardsRate)
+    function _tryClose(uint256 positionId, address trader, uint256[] memory prices, uint256 shardsRate, bool feePayable)
         internal
         returns (Settlement memory s)
     {
@@ -335,17 +352,17 @@ contract PerpetualFutures is
             s.owed = p.debited + profit - s.fee;
         } else {
             uint256 loss = uint256(-pnl);
-            s.fee = (loss * lossFeeRate) / WAD;
+            s.fee = feePayable ? (loss * lossFeeRate) / WAD : 0;
             uint256 lossFromDebit = Math.min(loss, p.debited);
             s.lost = loss - lossFromDebit;
             s.returned = cash - s.lost;
             s.owed = p.debited - lossFromDebit;
-            shards = _creditShards(p.trader, loss, queueLength() == 0 ? loss - s.fee : loss, shardsRate);
+            shards = _creditShards(p.trader, loss, loss - s.fee, shardsRate);
         }
         emit PositionClosed(positionId, p.trader, price, rawPnl, pnl, s.fee, shards, shardsRate);
     }
 
-    function _tryLiquidate(uint256 positionId, uint256[] memory prices, uint256 shardsRate)
+    function _tryLiquidate(uint256 positionId, uint256[] memory prices, uint256 shardsRate, bool feePayable)
         internal
         returns (uint256 fee)
     {
@@ -359,7 +376,7 @@ contract PerpetualFutures is
 
         uint256 cash = _release(positionId, p);
         if (cash != 0) _settleLoss(cash);
-        fee = (p.collateral * liquidationFeeRate) / WAD;
+        fee = feePayable ? (p.collateral * liquidationFeeRate) / WAD : 0;
         uint256 shards = _creditShards(p.trader, p.collateral, p.collateral, shardsRate);
         emit Liquidated(positionId, p.trader, price, liqPrice, fee, shards, shardsRate);
     }
@@ -372,6 +389,14 @@ contract PerpetualFutures is
         totalLosses += loss;
         totalShards += shards;
         shardsOf[trader] += shards;
+
+        address referrer = referrerOf[trader];
+        if (referrer != address(0)) {
+            uint256 referralShards = (shards * REFERRAL_SHARDS_RATE) / WAD;
+            totalShards += referralShards;
+            shardsOf[referrer] += referralShards;
+            emit ReferralShardsCredited(referrer, trader, referralShards);
+        }
     }
 
     function _release(uint256 positionId, Position memory p) internal returns (uint256 cash) {
