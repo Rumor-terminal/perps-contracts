@@ -22,7 +22,7 @@ All contracts are deployed only on BNB Smart Chain mainnet (Chain ID: 56).
 | Contract | Address |
 |----------|---------|
 | PerpetualFutures (proxy) | [0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1](https://bscscan.com/address/0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1) |
-| PerpetualFutures (implementation) | [0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F](https://bscscan.com/address/0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F) |
+| PerpetualFutures (implementation) | [0xBfe661b7Ac85AF2223F1A69869986947Fdf72b7C](https://bscscan.com/address/0xBfe661b7Ac85AF2223F1A69869986947Fdf72b7C) |
 | MulticallExecutor | [0xd1b6fDeF4972ED0bf92483b2041573830EED0ad5](https://bscscan.com/address/0xd1b6fDeF4972ED0bf92483b2041573830EED0ad5) |
 | USDT (collateral, BSC-USD) | [0x55d398326f99059fF775485246999027B3197955](https://bscscan.com/address/0x55d398326f99059fF775485246999027B3197955) |
 | Pyth oracle | [0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594](https://bscscan.com/address/0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594) |
