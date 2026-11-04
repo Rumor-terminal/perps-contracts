@@ -2,7 +2,7 @@
   "chainId": 56,
   "exchange": "0xa11e95DD56cDb943a7962BdC833c38FE2D6cb8e1",
   "executor": "0x676f67c4C2815048E59bf5400927F8e2d875953e",
-  "implementation": "0xd5207Bed2F3c677F68D61ceca844580eCfe5c37F",
+  "implementation": "0xBfe661b7Ac85AF2223F1A69869986947Fdf72b7C",
   "mockPyth": false,
   "pyth": "0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594",
   "startBlock": 129914991,

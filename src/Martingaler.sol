@@ -57,7 +57,9 @@ abstract contract Martingaler {
         }
 
         uint256 cash = amount - debited;
-        if (cash != 0) collateralToken.safeTransferFrom(trader, address(this), cash / collateralScale);
+        if (cash != 0) {
+            collateralToken.safeTransferFrom(trader, address(this), cash / collateralScale);
+        }
     }
 
     function _pay(address to, uint256 amount) internal {

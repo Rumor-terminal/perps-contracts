@@ -12,6 +12,7 @@ struct OpenRequest {
     uint32 leverage;
     uint256 nonce;
     uint256 deadline;
+    address ref;
 }
 
 struct CloseRequest {
@@ -59,6 +60,8 @@ interface IPerpetualFutures {
         uint256 shards,
         uint256 shardsRate
     );
+    event ReferrerSet(address indexed trader, address indexed referrer);
+    event ReferralShardsCredited(address indexed referrer, address indexed trader, uint256 shards);
     event Liquidated(
         uint256 indexed positionId,
         address indexed trader,
@@ -97,6 +100,10 @@ interface IPerpetualFutures {
     function previewPnl(uint256 positionId, uint256 markPrice) external view returns (int256 rawPnl, int256 pnl);
 
     function getShardsRate() external view returns (uint256);
+
+    function referrerOf(address trader) external view returns (address);
+
+    function hasTraded(address trader) external view returns (bool);
 
     function pythUpdateFee(bytes[] calldata priceUpdate) external view returns (uint256);
 
